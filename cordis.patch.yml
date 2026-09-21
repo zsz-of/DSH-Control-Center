@@ -1,0 +1,8 @@
+# dsh-control-center bundle patch
+#
+# Mounted as a dsh.bundle.patch layer: installing this package into a profile
+# (and listing it in dsh.profile.bundles) inserts the single plugin row below.
+# The plugin needs no config: data lives under ~/.dsh and defaults are built in.
+- insert:
+    - id: control-center
+      name: 'dsh-control-center'

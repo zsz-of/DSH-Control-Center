@@ -1,0 +1,35 @@
+# 外部工具二进制（安装包已内置，不入库）
+Tools/
+
+# 依赖目录（开发时以 junction 指向宿主 profile 的 @deepseek-ai）
+node_modules/
+
+# 构建产物与缓存
+dist/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / 编辑器
+.vs/
+.vscode/
+.idea/
+
+# 开发笔记 / AI 约束（本地上下文，非公开内容）
+.agents/
+
+# 安装与迁移的本地快照
+.install-backup-*/
+.migrated-backup-*/
+
+# OS / 临时文件
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.log
+.env
