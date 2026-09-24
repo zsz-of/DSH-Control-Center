@@ -147,6 +147,7 @@ DSH 的规则注入、MCP 挂载、技能发现分别由不同插件承担，各
 ```
 DSH-Control-Center/           ← 仓库根（clone 下来就是源码目录本身）
 ├── package.json              ← 插件清单：入口、exports、dsh 扩展点、peer 依赖
+├── LICENSE                   ← GPL-3.0 全文 + 版权声明（本项目的开源协议）
 ├── cordis.patch.yml          ← 插件在 profile 里的挂载补丁
 ├── README.md                 ← 本文档
 ├── lib/
@@ -325,4 +326,5 @@ GitHub Copilot、Cursor、Windsurf、Cline、Roo Code、Qwen Code，外加**自�
 
 ## 许可证
 
-MIT
+本项目以 [GPL-3.0](./LICENSE)（GNU General Public License v3.0 或更新版本）发布：
+二次分发与修改必须同样以 GPL-3.0 开源，不提供任何担保。
