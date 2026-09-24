@@ -62,6 +62,8 @@ host 半侧在 DSH Desktop **启动时**加载，client 半侧由浏览器**按 
 
 「打开目录 / 打开配置」在打开前会先把目标建出来：`~/.dsh/memory`、`~/.dsh/mcp.json` 这类
 「用到才有」的路径首次点击时并不存在，而系统文件管理器对不存在的路径既不报错也不开窗；
+要**定位**的那个文件还没建出来时（比如还没写过 MCP 的机器上没有 `mcp.json`），
+退回打开它所在的目录——`explorer.exe /select,<不存在的文件>` 会把桌面打开，那等于开错地方；
 失败会在右下角浮层里给出原因，不会静默没反应。
 
 **两种「关掉」的含义不同**：MCP 服务器关掉后**不挂载**，它的工具不会出现在任何 agent 的上下文里；
@@ -257,6 +259,7 @@ enabled: true
 
 `section` ∈ `rule | skill | memory | mcp | settings | backup | scan | reveal`。
 `reveal` 给 `path`（打开目录）或 `file`（在文件管理器里定位到它），失败会返回 400 与原因。
+字段名就是这两个（`path` 优先；旧客户端 bundle 发的 `dir` 仍被接受）；`file` 还不存在时退回打开父目录。
 技能分区的 `op` 有 `save | delete | toggle`（`toggle` 改的就是「对 Agent 启用/禁用」）。
 备份分区的 `op` 有 `create | delete | inspect | restore`，其中 `inspect` 是**只读**的：
 它读备份目录里的一个产物、算出还原计划并返回覆盖/新建清单，界面的「还原」先用它把话说清楚，

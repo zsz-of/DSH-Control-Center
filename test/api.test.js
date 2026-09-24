@@ -26,6 +26,9 @@ let harness
 let plugin
 let paths
 let settings
+// 动态 import：`lib/api.js` 会连带加载 `paths.js`，而它在模块加载时就把 HOME 定死了，
+// 所以必须等 `before()` 把 HOME 指到临时目录之后再进来。
+let api
 
 before(async () => {
   if (!existsSync(PEER_LINK)) return
@@ -36,6 +39,7 @@ before(async () => {
   process.env.DSH_HOME = harness
   paths = await import('../lib/paths.js')
   settings = await import('../lib/settings.js')
+  api = await import('../lib/api.js')
   plugin = await import('../lib/index.js')
   ready = true
 })
@@ -67,6 +71,44 @@ function mount() {
   plugin.apply(ctx)
   assert.ok(route !== undefined, 'API 没有注册到 webServer')
   return route.handler
+}
+
+/**
+ * 直接挂 API（不经 `plugin.apply`），并换掉「打开目录」用的启动器。
+ *
+ * 专供 reveal 用例：单测不该真的在桌面上开窗，而启动器只能从 `registerApi` 的**参数**传进来——
+ * 不能图省事去读 `ctx` 上没声明过的字段：真 cordis Context 是 proxy，读它会抛
+ * `cannot get property "X" without inject`，并让**整个插件树加载失败**（见 `test/plugin-load.test.js`）。
+ */
+function mountApi(launch) {
+  let route
+  api.registerApi(
+    {
+      webServer: {
+        register(spec) {
+          route = spec
+          return () => {}
+        },
+      },
+    },
+    { mcp: { snapshot: () => ({}) } },
+    { launch },
+  )
+  assert.ok(route !== undefined, 'API 没有注册到 webServer')
+  return route.handler
+}
+
+/** 假启动器：只记录「会执行什么命令」，不发真实进程。 */
+function fakeLauncher() {
+  const calls = []
+  const launch = (command, args, options) => {
+    calls.push({ command, args, options })
+    const child = new EventEmitter()
+    child.unref = () => {}
+    setImmediate(() => child.emit('spawn'))
+    return child
+  }
+  return { launch, calls }
 }
 
 /** 造一个请求对象：监听器注册完成后才发数据（与真实流一致）。 */
@@ -336,11 +378,36 @@ test('API：/revision 随写操作递增，读操作不动（前端据此轮询�
   await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'memory', op: 'save', memory: { name: 'x', body: 'b' } }))
   const rev2 = await call(handler, 'GET', '/api/dsh-control-center/revision')
   assert.equal(rev2.body.revision, rev0.body.revision + 1, '写操作应 +1')
+})
 
-  // reveal 不落盘，不该 bump。
-  await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'reveal', path: 'C:\\' }))
-  const rev3 = await call(handler, 'GET', '/api/dsh-control-center/revision')
-  assert.equal(rev3.body.revision, rev2.body.revision)
+test('API：reveal 打开的就是按钮给的那个目录（含旧客户端的 dir 名字），且不 bump 版本号', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
+  const { launch, calls } = fakeLauncher()
+  const handler = mountApi(launch)
+  const rev0 = (await call(handler, 'GET', '/api/dsh-control-center/revision')).body.revision
+
+  const dir = join(home, 'rules')
+  const opened = await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'reveal', path: dir }))
+  assert.equal(opened.body.ok, true)
+  assert.equal(opened.body.result.target, dir, '`path` 必须被原样打开，不能退回数据根目录')
+  assert.equal(opened.body.result.kind, 'dir')
+  assert.equal(calls[0].args[0], dir)
+
+  // 旧客户端 bundle 发的是 `dir`：认它，否则按钮会静默开到数据根目录去。
+  const legacyDir = join(home, 'skills')
+  const legacy = await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'reveal', dir: legacyDir }))
+  assert.equal(legacy.body.result.target, legacyDir)
+  assert.equal(calls[1].args[0], legacyDir)
+
+  // 定位一个还不存在的文件：退回父目录（explorer 对不存在的文件会去开「桌面」）。
+  const file = join(home, 'nope', 'mcp.json')
+  const located = await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'reveal', file }))
+  assert.equal(located.body.result.kind, 'dir')
+  assert.equal(located.body.result.target, join(home, 'nope'))
+  assert.equal(calls[2].args[0], join(home, 'nope'))
+
+  const rev = (await call(handler, 'GET', '/api/dsh-control-center/revision')).body.revision
+  assert.equal(rev, rev0, 'reveal 不落盘，不该 bump')
 })
 
 test('API：备份产物可以「就地还原」——inspect 先给覆盖清单，restore 再按文件覆盖', async (t) => {
