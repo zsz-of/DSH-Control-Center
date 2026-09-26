@@ -337,3 +337,54 @@ test('客户端 bundle：优化按钮在开关关闭/未就绪时返回空，开
   // 遮罩组件永远渲染一个隐藏锚点（它只负责挂 class）。
   assert.ok(veil({ sessionId: 's1' }) !== undefined)
 })
+
+test('客户端 bundle：只认领控制中心自己的提问卡（别人的卡片一个字节都不动）', async () => {
+  const exports = await loadBundle()
+  const { watchRuleAskCards } = exports.__internals.dom
+  assert.equal(typeof watchRuleAskCards, 'function')
+
+  /** 极小的卡片替身：认领逻辑只用到 textContent 与 setAttribute/getAttribute。 */
+  const card = (text) => ({
+    attrs: {},
+    textContent: text,
+    getAttribute(key) {
+      return this.attrs[key]
+    },
+    setAttribute(key, value) {
+      this.attrs[key] = value
+    },
+  })
+  const mine = card('控制中心：AI 想写入规则「规则甲」是否允许 AI 写入规则「规则甲」？')
+  const theirs = card('是否继续？允许一次 拒绝')
+  const frames = [mine, theirs]
+  const observers = []
+
+  const define = (key, value) => Object.defineProperty(globalThis, key, { value, configurable: true, writable: true })
+  define('MutationObserver', class {
+    constructor(run) {
+      this.run = run
+      observers.push(this)
+    }
+    observe(target) {
+      this.target = target
+    }
+  })
+  globalThis.document.querySelectorAll = (selector) => {
+    assert.equal(selector, '[data-question-key]', '认领只看平台提问卡的根节点属性')
+    return frames
+  }
+
+  watchRuleAskCards()
+  assert.equal(mine.attrs['data-dcc-rule-ask'], '1', '插件的卡片要打上淡黄标记')
+  assert.equal(theirs.attrs['data-dcc-rule-ask'], undefined, '别人的卡片不该被碰')
+  assert.equal(observers.length, 1, '卡片是后来才渲染的，必须挂着观察者')
+  assert.equal(observers[0].target, globalThis.document.body, '观察整棵 body 子树')
+
+  // 后来才出现的卡片：观察者回调里补认领（回调里走的是异步派发，得等一拍）。
+  const later = card('控制中心：AI 想删除规则「x.md」')
+  frames.push(later)
+  observers[0].run()
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(later.attrs['data-dcc-rule-ask'], '1')
+  assert.equal(mine.attrs['data-dcc-rule-ask'], '1', '已经认领过的不再重复处理')
+})

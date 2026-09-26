@@ -36,6 +36,7 @@ test('设置：文件不存在时返回默认值', async () => {
   assert.equal(current.optimize.provider, '')
   assert.equal(current.memory.inject, true)
   assert.equal(current.rules.approval, 'ask', '默认与平台自带行为一致：每次询问')
+  assert.deepEqual(current.rules.allowedWorkspaces, [], '默认没有任何工作区豁免')
   assert.equal(current.ui.defaultTab, 'rule')
   assert.deepEqual(current.scan.custom, [])
 })
@@ -92,10 +93,14 @@ test('设置：保存是深合并，不会把没传的分区清空', async () =>
   assert.equal(raw.memory.inject, false)
 })
 
-test('设置：审批档位只认四档，写坏了退回「每次询问」，别的分区保存不会把它抹掉', async () => {
-  assert.deepEqual(settings.RULE_APPROVALS, ['ask', 'allow', 'deny-once', 'deny-always'])
+test('设置：审批档位只认三档，写坏了退回「每次询问」，别的分区保存不会把它抹掉', async () => {
+  assert.deepEqual(settings.RULE_APPROVALS, ['ask', 'allow', 'deny-always'])
   assert.equal(settings.normalizeSettings({ rules: { approval: 'always-allow' } }).rules.approval, 'ask', '没见过的档位不能透传到闸门')
-  assert.equal(settings.normalizeSettings({ rules: { approval: 'deny-once' } }).rules.approval, 'deny-once')
+  assert.equal(
+    settings.normalizeSettings({ rules: { approval: 'deny-once' } }).rules.approval,
+    'ask',
+    '「禁止一次」是老版本的档位，现在只是弹框上的按钮',
+  )
   assert.equal(settings.normalizeSettings({ rules: null }).rules.approval, 'ask', '整组写坏也要退回默认')
 
   await settings.writeSettings({ rules: { approval: 'deny-always' } })
@@ -103,6 +108,19 @@ test('设置：审批档位只认四档，写坏了退回「每次询问」，�
   await settings.writeSettings({ memory: { inject: true } })
   assert.equal((await settings.readSettings()).rules.approval, 'deny-always', 'writeSettings 的合并列表里必须有 rules')
   await settings.writeSettings({ rules: { approval: 'ask' } })
+})
+
+test('设置：工作区豁免是去重后的路径清单，写坏的类型丢掉，切档位不会把它抹掉', async () => {
+  const normalized = settings.normalizeSettings({
+    rules: { allowedWorkspaces: ['D:\\a', 'D:\\a', '  D:\\b  ', '', 42, null] },
+  })
+  assert.deepEqual(normalized.rules.allowedWorkspaces, ['D:\\a', 'D:\\b'], '去重 + 去空白 + 丢掉非字符串')
+  assert.deepEqual(settings.normalizeSettings({ rules: { allowedWorkspaces: 'D:\\a' } }).rules.allowedWorkspaces, [], '不是数组就当没豁免')
+
+  await settings.writeSettings({ rules: { allowedWorkspaces: ['D:\\a'] } })
+  await settings.writeSettings({ rules: { approval: 'allow' } })
+  assert.deepEqual((await settings.readSettings()).rules.allowedWorkspaces, ['D:\\a'], '切档位不该丢掉豁免名单')
+  await settings.writeSettings({ rules: { allowedWorkspaces: [] } })
 })
 
 test('设置：DSH 默认模型从 settings.yaml 读出；缺失时返回 undefined', async () => {

@@ -42,8 +42,13 @@ after(async () => {
   if (home !== undefined) await rm(home, { recursive: true, force: true })
 })
 
-/** 注册全部工具，返回按名字索引的定义与审批处理器。approval 传入假的 approval 服务。 */
-function mount(approval) {
+/**
+ * 注册全部工具，返回按名字索引的定义与审批处理器。
+ *
+ * @param approval - 假的 `approval` 服务（平台审批通道的代用品）。
+ * @param questions - 假的 `userQuestions` 服务（四按钮弹框的代用品）；不传 = 弹框通道不可用。
+ */
+function mount(approval, questions) {
   const registered = new Map()
   let gate
   const ctx = {
@@ -57,7 +62,9 @@ function mount(approval) {
       if (event === 'tools/pre-execute') gate = handler
     },
     get(name) {
-      return name === 'approval' ? approval : undefined
+      if (name === 'approval') return approval
+      if (name === 'userQuestions') return questions
+      return undefined
     },
   }
   const state = { revision: 0 }
@@ -137,33 +144,107 @@ test('工具：会话审批被预设关掉时，闸门直接说清原因（不�
   }
 })
 
-test('工具：闸门按「规则」页的四档审批分流', async (t) => {
+test('工具：闸门按「规则」页的三档审批分流', async (t) => {
   if (!ready) return t.skip('缺少 @deepseek-ai/dsh-tools 链接')
   const settings = await import('../lib/settings.js')
   const next = () => 'allow'
-  const expected = { ask: 'ask', allow: 'allow', 'deny-once': 'deny', 'deny-always': 'deny' }
-  for (const id of settings.RULE_APPROVALS) {
-    await settings.writeSettings({ rules: { approval: id } })
-    const { gate } = mount({ effectivePolicy: () => 'ask' })
-    const decision = await gate({ name: 'control_center_rule_write', agent: { session: {} } }, next)
-    if (expected[id] === 'allow') assert.equal(decision, 'allow', `${id} 应直接放行`)
-    else assert.equal(decision.kind, expected[id], `${id} 的闸门结论`)
-  }
+  const session = { header: {} }
+  assert.deepEqual(settings.RULE_APPROVALS, ['ask', 'allow', 'deny-always'], '「禁止一次」不再是档位，只是弹框上的按钮')
 
-  // 「禁止一次」是一次性档位：拒掉这次之后自己回到「每次询问」，免得用户被永久关在门外。
-  await settings.writeSettings({ rules: { approval: 'deny-once' } })
-  const once = await mount({ effectivePolicy: () => 'ask' }).gate({ name: 'control_center_rule_delete', agent: { session: {} } }, next)
-  assert.equal(once.kind, 'deny')
-  assert.match(once.reason, /禁止一次/)
-  assert.equal((await settings.readSettings()).rules.approval, 'ask', '拒掉一次后自动回到每次询问')
+  await settings.writeSettings({ rules: { approval: 'allow' } })
+  const allowed = await mount(undefined, { ask: async () => ({ answers: [] }) }).gate({ name: 'control_center_rule_write', agent: { session } }, next)
+  assert.equal(allowed, 'allow', '「始终允许」直接放行，连弹框都不弹')
 
-  // 「禁止且不再询问」是常驻档位：拒绝理由要指路怎么恢复。
   await settings.writeSettings({ rules: { approval: 'deny-always' } })
-  const always = await mount({ effectivePolicy: () => 'ask' }).gate({ name: 'control_center_rule_write', agent: { session: {} } }, next)
+  const always = await mount().gate({ name: 'control_center_rule_write', agent: { session } }, next)
   assert.equal(always.kind, 'deny')
   assert.match(always.reason, /禁止且不再询问/)
   assert.equal((await settings.readSettings()).rules.approval, 'deny-always', '常驻档位不因一次调用而改变')
+
+  // 老版本存过的 deny-once 档位不再认识 → 退回「每次询问」。
+  await settings.writeSettings({ rules: { approval: 'deny-once' } })
+  assert.equal((await settings.readSettings()).rules.approval, 'ask')
+  await settings.writeSettings({ rules: { approval: 'ask', allowedWorkspaces: [] } })
+})
+
+test('工具：审批弹框的四个按钮各自对应一个动作（闸门自己问、自己记）', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-tools 链接')
+  const settings = await import('../lib/settings.js')
+  const next = () => 'allow'
+  const asked = []
+  /** 假装用户在弹框上点了某一项（undefined = 跳过没选）。 */
+  const answering = (label) => ({
+    ask: async (request) => {
+      asked.push(request.questions)
+      return {
+        answers: [
+          {
+            id: request.questions[0].id,
+            selected: label === undefined ? [] : [label],
+            ...(label === undefined ? { skipped: true } : {}),
+          },
+        ],
+      }
+    },
+  })
+
+  await settings.writeSettings({ rules: { approval: 'ask', allowedWorkspaces: [] } })
+  const session = { header: { cwd: 'D:\\proj' } }
+
+  // 「本轮对话中始终允许」：放行，且同一个会话下一次不再弹框。
+  const one = mount(undefined, answering('本轮对话中始终允许'))
+  // 平台的执行对象把参数放在 arguments 上（不是 args）——写错的话弹框标题只会显示「规则」。
+  assert.equal(await one.gate({ name: 'control_center_rule_write', agent: { session }, arguments: { name: '规则甲' } }, next), 'allow')
+  assert.equal(await one.gate({ name: 'control_center_rule_write', agent: { session }, arguments: { name: '规则乙' } }, next), 'allow')
+  assert.equal(asked.length, 1, '同一会话第二次不该再弹框')
+  const first = asked[0][0]
+  assert.match(first.header, /规则甲/)
+  assert.deepEqual(
+    first.options.map((option) => option.label),
+    ['本轮对话中始终允许', '此工作区内始终允许', '禁止一次', '禁止且不再询问'],
+    '有工作区时四个按钮都在，顺序与用户给的一致',
+  )
+
+  // 「此工作区内始终允许」：写进插件设置的豁免名单，之后同一个工作区直接放行。
+  const two = mount(undefined, answering('此工作区内始终允许'))
+  assert.equal(await two.gate({ name: 'control_center_rule_delete', agent: { session: { header: { cwd: 'D:\\other' } } }, arguments: { file: 'x.md' } }, next), 'allow')
+  // 删除工具的参数是 file，标题里也要把文件名带上。
+  assert.match(asked[asked.length - 1][0].header, /x\.md/)
+  assert.deepEqual((await settings.readSettings()).rules.allowedWorkspaces, ['D:\\other'])
+  const before = asked.length
+  assert.equal(await two.gate({ name: 'control_center_rule_delete', agent: { session: { header: { cwd: 'D:\\other' } } }, arguments: { file: 'y.md' } }, next), 'allow')
+  assert.equal(asked.length, before, '豁免过的工作区不该再弹框')
+
+  // 没有工作区时不出现「此工作区内始终允许」（按了也没用的按钮不该给）。
+  await mount(undefined, answering('禁止一次')).gate({ name: 'control_center_rule_write', agent: { session: { header: {} } } }, next)
+  assert.deepEqual(
+    asked[asked.length - 1][0].options.map((option) => option.label),
+    ['本轮对话中始终允许', '禁止一次', '禁止且不再询问'],
+  )
+
+  // 「禁止一次」：只拒这一次，档位不动。
+  const once = await mount(undefined, answering('禁止一次')).gate({ name: 'control_center_rule_write', agent: { session: { header: {} } } }, next)
+  assert.equal(once.kind, 'deny')
+  assert.match(once.reason, /禁止一次/)
+  assert.equal((await settings.readSettings()).rules.approval, 'ask')
+
+  // 「禁止且不再询问」：拒掉，并把档位改成常驻拒绝。
+  const four = await mount(undefined, answering('禁止且不再询问')).gate({ name: 'control_center_rule_write', agent: { session: { header: {} } } }, next)
+  assert.equal(four.kind, 'deny')
+  assert.match(four.reason, /禁止且不再询问/)
+  assert.equal((await settings.readSettings()).rules.approval, 'deny-always')
+
+  // 跳过没选：不放行，档位也不变（fail-closed）。
   await settings.writeSettings({ rules: { approval: 'ask' } })
+  const skipped = await mount(undefined, answering(undefined)).gate({ name: 'control_center_rule_write', agent: { session: { header: {} } } }, next)
+  assert.equal(skipped.kind, 'deny')
+  assert.match(skipped.reason, /没有选择/)
+  assert.equal((await settings.readSettings()).rules.approval, 'ask', '跳过不该改档位')
+
+  // 弹框通道不可用（没有 userQuestions 服务）→ 退回平台的审批通道，而不是悄悄放行。
+  const fallback = await mount({ effectivePolicy: () => 'ask' }).gate({ name: 'control_center_rule_write', agent: { session: { header: {} } } }, next)
+  assert.equal(fallback.kind, 'ask')
+  await settings.writeSettings({ rules: { approval: 'ask', allowedWorkspaces: [] } })
 })
 
 test('工具：档位是「每次询问」时，先替用户把被预设关掉的审批拨回来', async (t) => {

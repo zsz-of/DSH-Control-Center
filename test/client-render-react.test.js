@@ -139,7 +139,7 @@ function fixtureState() {
     settings: {
       optimize: { enabled: true, provider: '', model: '', reasoningEffort: '', prompt: '' },
       memory: { enabled: true, inject: true },
-      rules: { approval: 'ask' },
+      rules: { approval: 'ask', allowedWorkspaces: [] },
       backup: { retention: 20, snapshotBeforeImport: true },
       scan: { disabled: [], custom: [] },
       ui: { defaultTab: 'rule' },
@@ -175,18 +175,19 @@ test('真实 React：所有页面在完整 state 下都能 renderToString', asyn
   }
 })
 
-test('真实 React：规则页有「AI 改规则时的审批」四档，两个入口都在', async (t) => {
+test('真实 React：规则页的审批下拉只有三档，两个入口都在', async (t) => {
   if (!ready) return t.skip('缺少 profile 里的 react/react-dom（先跑一次 install.mjs）')
   const state = fixtureState()
   // 控制中心的「规则」页与会话里的项目规则视图共用 RulesSection，所以两处都该有这一项。
   for (const target of [{ scope: 'global', workspace: '' }, { scope: 'project', workspace: 'D:\\Code\\Demo' }]) {
     const html = renderToString(React.createElement(internals.tabs.RulesSection, { state, act, busy: false, error: null, ...target }))
     assert.match(html, /AI 改规则时的审批/, '两处入口都要有这一项')
-    for (const label of ['每次询问', '始终同意', '禁止一次', '禁止且不再询问']) {
+    for (const label of ['每次询问', '始终允许', '禁止且不再询问']) {
       assert.match(html, new RegExp(`>${label}<`), `缺档位：${label}`)
     }
+    assert.doesNotMatch(html, /<option value="deny-once"/, '「禁止一次」不再是下拉档位，它只是弹框上的按钮')
     assert.match(html, /<option value="ask" selected="">/, '默认选中「每次询问」')
-    assert.match(html, /权限预设关掉了审批/, '选中那一档要带解释')
+    assert.match(html, /弹框问你/, '选中那一档要带解释')
   }
 
   const denied = fixtureState()
@@ -195,6 +196,19 @@ test('真实 React：规则页有「AI 改规则时的审批」四档，两个�
   assert.match(html, /<option value="deny-always" selected="">/, '当前档位要回显')
   assert.doesNotMatch(html, /<option value="ask" selected="">/)
   assert.match(html, /一律拒绝 AI 改规则/, '解释跟着档位走')
+})
+
+test('真实 React：豁免过的工作区在规则页列出来，并且能一键清除', async (t) => {
+  if (!ready) return t.skip('缺少 profile 里的 react/react-dom（先跑一次 install.mjs）')
+  const plain = renderToString(React.createElement(internals.tabs.RulesSection, { state: fixtureState(), act, busy: false, error: null, scope: 'global', workspace: '' }))
+  assert.doesNotMatch(plain, /已豁免的工作区/, '没有豁免时不显示这一行')
+
+  const exempt = fixtureState()
+  exempt.settings.rules.allowedWorkspaces = ['D:\\Code\\Demo', 'D:\\Code\\Other']
+  const html = renderToString(React.createElement(internals.tabs.RulesSection, { state: exempt, act, busy: false, error: null, scope: 'global', workspace: '' }))
+  assert.match(html, /已豁免的工作区/)
+  assert.match(html, /D:\\Code\\Demo/)
+  assert.match(html, />清除</)
 })
 
 test('真实 React：所有「勾选」都渲染成滑块开关（role=switch），不再是原生方框', async (t) => {
