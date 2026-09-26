@@ -3,13 +3,27 @@
 > 把 DSH 里分散的**规则 / 技能 / 记忆 / MCP 服务器 / 备份 / 跨客户端导入**收进同一个图形化控制中心，
 > 并在聊天输入框上提供一个「AI 提示词优化」按钮。
 
-开发者：zsz 和 DeepSeek
+开发者：zsz
 版本：0.2.0
 编写语言：JavaScript（ESM，Node.js 20+，运行时零第三方依赖）
 依赖环境：宿主平台 DeepSeek Harness（dsh）0.1.2-rc.1+ 及其 peer 包
 （`@deepseek-ai/cordis`、`dsh-agent`、`dsh-fs`、`dsh-host-webserver`、`dsh-llm`、`dsh-mcp-client`、`dsh-skill`），
 由 dsh 以链接方式提供，随宿主版本走，不需要额外安装
-系统要求：Windows 10 1809+ / macOS 12+ / Linux；DeepSeek Harness（dsh）0.1.2-rc.1+；Node.js 20+
+## 许可证
+
+本程序基于 **GNU General Public License v3.0 (GPLv3)** 开源协议发布。
+
+Copyright (C) 2026 zsz
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+本程序分发时附带希望其有用的保证，但不提供任何担保；甚至不提供适销性或特定用途适用性的默示担保。详见 [LICENSE](LICENSE)。
+
+---
+
+## 系统要求
+
+Windows 10 1809+ / macOS 12+ / Linux；DeepSeek Harness（dsh）0.1.2-rc.1+；Node.js 20+
 
 ## 安装
 
@@ -323,8 +337,3 @@ GitHub Copilot、Cursor、Windsurf、Cline、Roo Code、Qwen Code，外加**自�
 - [dsh-baize-rules](https://github.com/bvcvb/dsh-baize-rules) —— 客户端插件手写 bundle 的写法参考
 - [dsh-config-manager](https://www.npmjs.com/package/dsh-config-manager) —— `settings.section` 注册与 host API 的接线参考
 - [dsh-agent-sync](https://github.com/kuaiyukuaikuai/dsh-agent-sync) —— 跨客户端扫描的客户端目录约定参考
-
-## 许可证
-
-本项目以 [GPL-3.0](./LICENSE)（GNU General Public License v3.0 或更新版本）发布：
-二次分发与修改必须同样以 GPL-3.0 开源，不提供任何担保。
