@@ -4,7 +4,7 @@
 > 并在聊天输入框上提供一个「AI 提示词优化」按钮。
 
 开发者：zsz
-版本：0.2.0
+版本：0.2.1
 编写语言：JavaScript（ESM，Node.js 20+，运行时零第三方依赖）
 依赖环境：宿主平台 DeepSeek Harness（dsh）0.1.2-rc.1+ 及其 peer 包
 （`@deepseek-ai/cordis`、`dsh-agent`、`dsh-fs`、`dsh-host-webserver`、`dsh-llm`、`dsh-mcp-client`、`dsh-skill`），
@@ -27,7 +27,8 @@ Windows 10 1809+ / macOS 12+ / Linux；DeepSeek Harness（dsh）0.1.2-rc.1+；No
 
 ## 安装
 
-本插件安装在 dsh 的某个 profile 下（桌面壳用 `web`）：
+本插件安装在 dsh 的某个 profile 下（桌面壳用 `web`）。版本历史与源码归档见
+[Releases](https://github.com/zsz-of/DSH-Control-Center/releases)：
 
 ```bash
 git clone <本仓库> DSH-Control-Center
@@ -186,7 +187,7 @@ DSH-Control-Center/           ← 仓库根（clone 下来就是源码目录本�
 │   ├── build-client.mjs      ← 分片 → lib/client.js（含语法自检、--check 模式）
 │   ├── install.mjs           ← 安装/回滚（先构建，再 junction + profile 接线 + 组合校验）
 │   └── import-rules.mjs      ← 从既有规则目录批量导入
-└── test/                     ← node --test 单元 + 集成测试（133 项）
+└── test/                     ← node --test 单元 + 集成测试（139 项）
 ```
 
 ### 为什么客户端是「分片 + 拼接」
