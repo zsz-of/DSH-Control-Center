@@ -53,6 +53,9 @@ test('reveal：`path` 指的目录不存在时先建出来，再把目录交给�
   assert.equal(calls.length, 1)
   assert.equal(calls[0].args[0], target)
   assert.equal(calls[0].options.detached, true)
+  // windowsHide 必须不是 true：它会让 Windows 给 explorer.exe 带上 SW_HIDE，
+  // 目录确实被打开了但窗口是隐藏的——用户看到的就是「点了没反应」（实测详见 api.js 注释）。
+  assert.notEqual(calls[0].options.windowsHide, true, 'windowsHide 会隐藏 explorer 窗口')
   assert.equal(calls[0].command, opener)
 })
 
