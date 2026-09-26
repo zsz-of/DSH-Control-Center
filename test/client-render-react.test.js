@@ -247,3 +247,31 @@ test('真实 React：优化失败的原因在手机上也读得到（是可点�
     flagsStore.set(null)
   }
 })
+
+test('真实 React：发送后输入框被清空，「撤销」当帧就不该再显示', async (t) => {
+  if (!ready) return t.skip('缺少 profile 里的 react/react-dom')
+  const { OptimizeButton, optimizeStore, flagsStore, canUndoOptimize } = internals.composer
+  const done = { kind: 'done', original: '写个脚本', optimized: '改写后的草稿', route: 'deepseek-official/deepseek-v4' }
+  // 纯函数层：草稿被清空（或只剩空白）就没有可撤的对象；没优化过就更不用说。
+  assert.equal(canUndoOptimize(done, ''), false, '空草稿不该还给撤销')
+  assert.equal(canUndoOptimize(done, '   '), false, '只有空白也算空')
+  assert.equal(canUndoOptimize(done, '改写后的草稿'), true)
+  assert.equal(canUndoOptimize({ kind: 'idle' }, '改写后的草稿'), false)
+
+  flagsStore.set({ optimize: { enabled: true, available: true } })
+  optimizeStore.set('s-sent', done)
+  const props = { sessionId: 's-sent', inputActions: { setDraft: () => {} } }
+  try {
+    const kept = { ...props, useInput: (select) => select({ draft: '改写后的草稿' }) }
+    assert.match(renderToString(React.createElement(OptimizeButton, kept)), /撤销/)
+    // 宿主在一次成功发送里会清空编辑器（`send-committed` → 效果 `commit-draft`）。
+    // 这一刻「撤销」必须消失：留着它就会挂到用户接着写的那一段输入上。
+    const sent = { ...props, useInput: (select) => select({ draft: '' }) }
+    const html = renderToString(React.createElement(OptimizeButton, sent))
+    assert.equal(html.includes('撤销'), false, '发送后不该还留着撤销按钮')
+    assert.match(html, />优化</, '撤销收掉之后，「优化」要照样可用')
+  } finally {
+    optimizeStore.set('s-sent', { kind: 'idle' })
+    flagsStore.set(null)
+  }
+})
