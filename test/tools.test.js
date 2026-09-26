@@ -42,8 +42,8 @@ after(async () => {
   if (home !== undefined) await rm(home, { recursive: true, force: true })
 })
 
-/** 注册全部工具，返回按名字索引的定义与审批处理器。 */
-function mount() {
+/** 注册全部工具，返回按名字索引的定义与审批处理器。approval 传入假的 approval 服务。 */
+function mount(approval) {
   const registered = new Map()
   let gate
   const ctx = {
@@ -55,6 +55,9 @@ function mount() {
     },
     on(event, handler) {
       if (event === 'tools/pre-execute') gate = handler
+    },
+    get(name) {
+      return name === 'approval' ? approval : undefined
     },
   }
   const state = { revision: 0 }
@@ -112,6 +115,25 @@ test('工具：配置类不需要审批，规则写入必须 ask', async (t) => 
     const decision = gate({ name }, next)
     assert.equal(decision.kind, 'ask', `${name} 必须要求审批`)
     assert.match(decision.reason, /规则/)
+  }
+})
+
+test('工具：会话审批被预设关掉时，闸门直接说清原因（不让平台误报「用户拒绝」）', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-tools 链接')
+  const next = () => 'allow'
+  const never = mount({ effectivePolicy: () => 'never' })
+  assert.equal(never.gate({ name: 'control_center_rule_list' }, next), 'allow', '非规则写入不受影响')
+  for (const name of tools.APPROVAL_REQUIRED) {
+    const decision = never.gate({ name, agent: { session: {} } }, next)
+    assert.equal(decision.kind, 'deny', `${name} 在 approval=never 下不该走 ask（平台会在弹窗前直接拒）`)
+    assert.match(decision.reason, /权限预设/)
+    assert.match(decision.reason, /workspace-write/)
+    assert.doesNotMatch(decision.reason, /用户拒绝/, '不要把平台策略说成用户拒绝')
+  }
+  const ask = mount({ effectivePolicy: () => 'ask' })
+  for (const name of tools.APPROVAL_REQUIRED) {
+    const decision = ask.gate({ name, agent: { session: {} } }, next)
+    assert.equal(decision.kind, 'ask', `${name} 在 approval=ask 下必须弹审批`)
   }
 })
 
