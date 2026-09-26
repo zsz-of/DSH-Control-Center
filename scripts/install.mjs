@@ -172,7 +172,10 @@ async function main() {
     packageJson.dsh.profile = packageJson.dsh.profile ?? {}
     packageJson.dsh.profile.bundles = [...(packageJson.dsh.profile.bundles ?? []), PACKAGE_NAME]
     packageJson.dependencies = packageJson.dependencies ?? {}
-    packageJson.dependencies[PACKAGE_NAME] = `file:${SOURCE.replace(/\\/g, '/')}`
+    // 必须用 link:，不能写 file:——桌面壳 bundled 的 pnpm 会把**绝对** file: spec 当相对路径，
+    // 在 profile 目录下拼出 `<profile>\D:\…` 并 ENOENT，桌面壳随后放弃市场基线并进安全模式。
+    // 实测 file:D:/…、file:///D:/…、反斜杠形式全部 ENOENT；link: 建 junction 且可重复安装。
+    packageJson.dependencies[PACKAGE_NAME] = `link:${SOURCE.replace(/\\/g, '/')}`
     if (!options.dryRun) await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8')
     console.log('- package.json  : 已加入 dependencies 与 dsh.profile.bundles')
   } else {
