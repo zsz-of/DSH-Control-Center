@@ -109,10 +109,10 @@ test('工具：配置类不需要审批，规则写入必须 ask', async (t) => 
   assert.equal(typeof gate, 'function', '必须注册 tools/pre-execute 闸门')
   const next = () => 'allow'
   for (const name of ['control_center_mcp', 'control_center_import', 'control_center_memory', 'control_center_settings', 'control_center_backup', 'control_center_skill', 'control_center_rule_list']) {
-    assert.equal(gate({ name }, next), 'allow', `${name} 不该要求审批`)
+    assert.equal(await gate({ name }, next), 'allow', `${name} 不该要求审批`)
   }
   for (const name of tools.APPROVAL_REQUIRED) {
-    const decision = gate({ name }, next)
+    const decision = await gate({ name }, next)
     assert.equal(decision.kind, 'ask', `${name} 必须要求审批`)
     assert.match(decision.reason, /规则/)
   }
@@ -122,9 +122,9 @@ test('工具：会话审批被预设关掉时，闸门直接说清原因（不�
   if (!ready) return t.skip('缺少 @deepseek-ai/dsh-tools 链接')
   const next = () => 'allow'
   const never = mount({ effectivePolicy: () => 'never' })
-  assert.equal(never.gate({ name: 'control_center_rule_list' }, next), 'allow', '非规则写入不受影响')
+  assert.equal(await never.gate({ name: 'control_center_rule_list' }, next), 'allow', '非规则写入不受影响')
   for (const name of tools.APPROVAL_REQUIRED) {
-    const decision = never.gate({ name, agent: { session: {} } }, next)
+    const decision = await never.gate({ name, agent: { session: {} } }, next)
     assert.equal(decision.kind, 'deny', `${name} 在 approval=never 下不该走 ask（平台会在弹窗前直接拒）`)
     assert.match(decision.reason, /权限预设/)
     assert.match(decision.reason, /workspace-write/)
@@ -132,9 +132,58 @@ test('工具：会话审批被预设关掉时，闸门直接说清原因（不�
   }
   const ask = mount({ effectivePolicy: () => 'ask' })
   for (const name of tools.APPROVAL_REQUIRED) {
-    const decision = ask.gate({ name, agent: { session: {} } }, next)
+    const decision = await ask.gate({ name, agent: { session: {} } }, next)
     assert.equal(decision.kind, 'ask', `${name} 在 approval=ask 下必须弹审批`)
   }
+})
+
+test('工具：闸门按「规则」页的四档审批分流', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-tools 链接')
+  const settings = await import('../lib/settings.js')
+  const next = () => 'allow'
+  const expected = { ask: 'ask', allow: 'allow', 'deny-once': 'deny', 'deny-always': 'deny' }
+  for (const id of settings.RULE_APPROVALS) {
+    await settings.writeSettings({ rules: { approval: id } })
+    const { gate } = mount({ effectivePolicy: () => 'ask' })
+    const decision = await gate({ name: 'control_center_rule_write', agent: { session: {} } }, next)
+    if (expected[id] === 'allow') assert.equal(decision, 'allow', `${id} 应直接放行`)
+    else assert.equal(decision.kind, expected[id], `${id} 的闸门结论`)
+  }
+
+  // 「禁止一次」是一次性档位：拒掉这次之后自己回到「每次询问」，免得用户被永久关在门外。
+  await settings.writeSettings({ rules: { approval: 'deny-once' } })
+  const once = await mount({ effectivePolicy: () => 'ask' }).gate({ name: 'control_center_rule_delete', agent: { session: {} } }, next)
+  assert.equal(once.kind, 'deny')
+  assert.match(once.reason, /禁止一次/)
+  assert.equal((await settings.readSettings()).rules.approval, 'ask', '拒掉一次后自动回到每次询问')
+
+  // 「禁止且不再询问」是常驻档位：拒绝理由要指路怎么恢复。
+  await settings.writeSettings({ rules: { approval: 'deny-always' } })
+  const always = await mount({ effectivePolicy: () => 'ask' }).gate({ name: 'control_center_rule_write', agent: { session: {} } }, next)
+  assert.equal(always.kind, 'deny')
+  assert.match(always.reason, /禁止且不再询问/)
+  assert.equal((await settings.readSettings()).rules.approval, 'deny-always', '常驻档位不因一次调用而改变')
+  await settings.writeSettings({ rules: { approval: 'ask' } })
+})
+
+test('工具：档位是「每次询问」时，先替用户把被预设关掉的审批拨回来', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-tools 链接')
+  const settings = await import('../lib/settings.js')
+  await settings.writeSettings({ rules: { approval: 'ask' } })
+  const flipped = []
+  const gate = mount({
+    effectivePolicy: () => 'never',
+    setPolicy: (agent, policy) => flipped.push([agent, policy]),
+  }).gate
+  const decision = await gate({ name: 'control_center_rule_write', agent: { session: {} } }, () => 'allow')
+  assert.equal(decision.kind, 'ask', '拨回 ask 之后就走平台的审批通道')
+  assert.deepEqual(flipped.map(([, policy]) => policy), ['ask'], 'setPolicy 只该被调一次，且拨到 ask')
+
+  // 平台没给 setPolicy（或没有 agent）时不能假装能弹窗，得把原因说清楚。
+  const stuck = await mount({ effectivePolicy: () => 'never' }).gate({ name: 'control_center_rule_write', agent: { session: {} } }, () => 'allow')
+  assert.equal(stuck.kind, 'deny')
+  assert.match(stuck.reason, /权限预设/)
+  assert.doesNotMatch(stuck.reason, /用户拒绝/)
 })
 
 test('工具：规则写入只在用户审批通过后才落盘（默认全局，也可写项目）', async (t) => {
