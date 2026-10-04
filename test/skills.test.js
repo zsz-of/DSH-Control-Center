@@ -121,14 +121,53 @@ test('provider：在控制中心关掉的技能不进候选，重新启用后回
   assert.equal((await provider.list({ cwd: home })).some((item) => item.name === 'toggle-me'), false)
   // 但控制中心仍旧看得到它（否则没法再打开）。
   assert.equal((await store.listSkills()).find((item) => item.id === 'toggle-me').enabled, false)
-  // 落盘形态：正文与其余 frontmatter 原样保留，只多一个 enabled: false。
+  // 落盘形态：正文保留，写平台键组合（preset 层 provider 也按它过滤）+ 关闭标记。
   const raw = await readFile(join(home, '.dsh', 'skills', 'toggle-me', 'SKILL.md'), 'utf8')
   assert.match(raw, /^enabled: false$/m)
+  assert.match(raw, /^disable-model-invocation: true$/m)
+  assert.match(raw, /^user-invocable: false$/m)
+  assert.match(raw, /^x-dsh-cc-suspended: true$/m)
   assert.match(raw, /正文/)
 
   await store.setSkillEnabled('toggle-me', true)
+  const resumed = await readFile(join(home, '.dsh', 'skills', 'toggle-me', 'SKILL.md'), 'utf8')
   assert.ok((await provider.list({ cwd: home })).some((item) => item.name === 'toggle-me'), '重新启用后应回到目录里')
-  assert.equal(/^enabled:/m.test(await readFile(join(home, '.dsh', 'skills', 'toggle-me', 'SKILL.md'), 'utf8')), false)
+  assert.equal(/^enabled:/m.test(resumed), false)
+  assert.equal(/^disable-model-invocation:/m.test(resumed), false)
+  assert.equal(/^user-invocable:/m.test(resumed), false)
+  assert.equal(/^x-dsh-cc-suspended:/m.test(resumed), false)
+})
+
+test('技能开关：关闭前的调用策略被快照，「重新启用」恢复原值', async () => {
+  // 用户本来就设了「只许模型自动调」（disable-model-invocation: true）：
+  await store.writeSkill({ id: 'model-only', description: '只许模型调', body: '正文', userInvocable: false })
+  await store.setSkillEnabled('model-only', false)
+  const suspended = await readFile(join(home, '.dsh', 'skills', 'model-only', 'SKILL.md'), 'utf8')
+  // 关闭叠加平台键，并把「user-invocable 原本是 false」快照下来（原值缺省的键不写快照）。
+  assert.match(suspended, /^x-dsh-cc-orig-user-invocable: false$/m)
+  assert.doesNotMatch(suspended, /^x-dsh-cc-orig-model-invocation:/m)
+
+  await store.setSkillEnabled('model-only', true)
+  const resumed = await readFile(join(home, '.dsh', 'skills', 'model-only', 'SKILL.md'), 'utf8')
+  // 恢复到用户原本的策略：user-invocable: false 回来了，快照键被清掉。
+  assert.match(resumed, /^user-invocable: false$/m)
+  assert.equal(/^x-dsh-cc-orig-/m.test(resumed), false)
+  assert.equal(/^x-dsh-cc-suspended:/m.test(resumed), false)
+  const back = (await store.listSkills()).find((item) => item.id === 'model-only')
+  assert.equal(back.enabled, true)
+  assert.equal(back.userInvocable, false)
+})
+
+test('技能开关：手工写的 enabled: false 旧标记也认，启用后清掉', async () => {
+  await store.writeSkill({ id: 'legacy-off', description: '旧标记', body: '正文' })
+  const path = join(home, '.dsh', 'skills', 'legacy-off', 'SKILL.md')
+  await writeFile(path, (await readFile(path, 'utf8')).replace('---\n', '---\nenabled: false\n'), 'utf8')
+  assert.equal((await store.listSkills()).find((item) => item.id === 'legacy-off').enabled, false)
+
+  await store.setSkillEnabled('legacy-off', true)
+  const resumed = await readFile(path, 'utf8')
+  assert.equal(/^enabled:/m.test(resumed), false)
+  assert.equal((await store.listSkills()).find((item) => item.id === 'legacy-off').enabled, true)
 })
 
 test('闸门：调用已关闭的技能被拒且说明原因，其余调用原样放行', async () => {
