@@ -321,9 +321,22 @@ test('客户端 bundle：面板关闭时不渲染，打开后渲染页头与标�
   stateQueue = []
   const tree = tabs.ControlCenterPanel({})
   assert.ok(tree !== undefined && tree !== null)
+  // 整页盖住了应用标题栏：顶部必须先让出两条空行（用户要求）。
+  const pad = tree.props.children[0]
+  assert.equal(pad.props.className, 'dcc-padlines')
+  assert.equal(pad.props.children.length, 2, '顶部必须是两条空行')
   // 侧边栏入口始终渲染（它是进入整页的唯一入口）。
   stateQueue = []
-  assert.ok(tabs.ControlCenterEntry({ wide: true }) !== null)
+  const wideEntry = tabs.ControlCenterEntry({ wide: true })
+  assert.ok(wideEntry !== null)
+  // 几何与平台自带「设置」按钮一致：外面一层 triggerRow 包装，里面才是按钮（差这层就会与
+  // 「远程控制」「设置」的缩进对不齐）。
+  assert.equal(wideEntry.props.className, 'dcc-sideentry-row')
+  assert.equal(wideEntry.props.children.props.className, 'dcc-sideentry')
+  assert.equal(
+    tabs.ControlCenterEntry({ wide: false }).props.className,
+    'dcc-sideentry-row dcc-sideentry-railrow',
+  )
   panelStore.close()
 })
 

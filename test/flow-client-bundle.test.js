@@ -657,6 +657,41 @@ test('原生座位：cwd 来自 useSessions；装配里没有 renderSlot 时退�
   )
 })
 
+test('原生座位：带推理的节点由本插件自绘（核心会把答案步的推理藏成 hidden → 点开一片空白）', () => {
+  const { view, t } = bootView()
+  const { calls, renderSlot } = seatSpy()
+  const reasoning = assistantNode('a1', 1, 2, [{ kind: 'reasoning', text: '先把思路理清楚再动手' }])
+  const snapshot = makeSnapshot([
+    userNode('u1', 1, '干活'),
+    todoNode('p1', 1, 1, [{ content: '任务A', status: 'in_progress' }]),
+    reasoning,
+    pwshNode('t1', 1, 3, 'echo a', 'a'),
+  ])
+  const props = {
+    sessionId: 'session-thinking-own',
+    t,
+    useChat: (selector) => selector(snapshot),
+    useSession: () => ({ hasMore: false, loadingOlder: false }),
+    renderSlot,
+  }
+  // 推理行在懒加载的思考块正文里：先点开思考块，它才会进树。
+  expandThinkingBlocks(view, props)
+  calls.length = 0
+  const tree = view.component(props)
+
+  assert.equal(
+    calls.some((call) => call.owner.node === reasoning),
+    false,
+    '带推理的节点不能走原生座位：核心对答案步的推理写 hidden="until-found"，用户点开就是空白',
+  )
+  assert.equal(
+    calls.some((call) => call.owner.node.kind === 'tool-call'),
+    true,
+    '工具调用照旧走原生座位（只把推理行改成自绘）',
+  )
+  assert.ok(collectText(tree).includes('先把思路理清楚再动手'), '推理正文必须真的渲染出来')
+})
+
 test('原生座位外面套着错误边界：失败时给出回退叶子，并且留日志', async () => {
   /*
     这一条需要「createElement 不立刻调用组件」的渲染器：手写渲染器会把类组件当场 new 出来，
@@ -676,6 +711,23 @@ test('原生座位外面套着错误边界：失败时给出回退叶子，并�
     views.NativeSeat({ node, owner: {}, renderSlot: undefined, fallback }),
     fallback,
     '没有 renderSlot（装配里没有 ui-chat）时不用套边界，直接给回退叶子',
+  )
+  // 座位「认领了却不渲染任何东西」也是真机出现过的一类空白（核心会把答案步的推理写成
+  // hidden="until-found"）：渲染成空一律退回自绘叶子，宁可多画一行也不留白。
+  assert.equal(
+    views.NativeSeatInner({ node, owner: {}, renderSlot: () => null, fallback }),
+    fallback,
+    '座位渲染成 null 时改用自绘叶子',
+  )
+  assert.equal(
+    views.NativeSeatInner({ node, owner: {}, renderSlot: () => [], fallback }),
+    fallback,
+    '座位渲染成空数组时同样改用自绘叶子',
+  )
+  assert.equal(
+    views.NativeSeatInner({ node, owner: {}, renderSlot: () => seated, fallback }),
+    seated,
+    '座位真的渲染出内容时原样使用',
   )
 
   /**

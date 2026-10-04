@@ -601,3 +601,35 @@ test('SSR：没有子代理时工具条完全不出现（不留空行）', (t) =
   const noSeat = render(snapshot, { sessionId: 's2' })
   assert.equal(noSeat.includes('data-dcf-agentbar'), false, '席位缺席也没有工具条')
 })
+
+/* ───────────────────── 「思考中」块里的推理行不交给原生座位（真实 React） ───────────────────── */
+
+test('SSR：带推理的节点自己画，不交给原生座位（核心会把答案步的推理藏起来，展开就是空白）', (t) => {
+  if (!ready) return t.skip('缺少 profile 里的 react / react-dom')
+  const seated = []
+  const snapshot = makeSnapshot([
+    userNode('u1', 1, '干活'),
+    todoNode('p1', 1, 1, [{ content: '任务A', status: 'in_progress' }]),
+    assistantNode('a1', 1, 2, [{ kind: 'reasoning', text: '先把思路理清楚再动手' }]),
+    pwshNode('t1', 1, 3, 'echo a', 'a'),
+  ])
+  const html = withThinkingOpen((sessionId) =>
+    render(snapshot, {
+      sessionId,
+      renderSlot: (slot, owner, seatOptions) => {
+        const blocks = owner.node?.data?.blocks ?? []
+        seated.push({
+          kind: owner.node.kind,
+          reasoning: blocks.some((block) => block.kind === 'reasoning' && block.text !== ''),
+        })
+        return ReactRef.createElement('div', { 'data-native-seat': seatOptions.entryKey })
+      },
+    }),
+  )
+  assert.match(html, /先把思路理清楚再动手/, '推理内容必须自己画出来（真机上座位会把它渲染成空）')
+  assert.equal(
+    seated.every((call) => call.reasoning === false),
+    true,
+    '带推理的节点不能走原生座位：核心对答案步的推理会写 hidden="until-found"，用户点开就是空白',
+  )
+})
