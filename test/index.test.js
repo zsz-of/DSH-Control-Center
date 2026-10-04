@@ -43,9 +43,31 @@ after(async () => {
   if (home !== undefined) await rm(home, { recursive: true, force: true })
 })
 
+/** 把若干 `agent/pre-step` 处理器串成 `next()` 链（真 cordis 的瀑布语义）。 */
+function chainPreStep(list) {
+  return async (payload, next) => {
+    let cursor = -1
+    const dispatch = async (index) => {
+      if (index <= cursor) throw new Error('pre-step 的 next() 被重复调用')
+      cursor = index
+      const handler = list[index]
+      if (handler === undefined) return next()
+      return handler(payload, () => dispatch(index + 1))
+    }
+    return dispatch(0)
+  }
+}
+
+/** 普通通知事件（无 `next`）：登记过的处理器按顺序各调一次。 */
+function notifyAll(list) {
+  return (...args) => {
+    for (const handler of [...list]) handler(...args)
+  }
+}
+
 /** 造一个只记录调用的桩上下文。 */
 function stubContext(options = {}) {
-  const captured = { handlers: new Map(), effects: [], disposers: [], providers: [], routes: [], tools: [] }
+  const captured = { handlers: new Map(), listeners: new Map(), effects: [], disposers: [], providers: [], routes: [], tools: [] }
   // 桩 ctx 提供的服务；`inject` 只在该服务存在时才跑回调，与真实 cordis 语义一致。
   const services = {
     ...(options.llm === undefined ? {} : { llm: options.llm }),
@@ -57,8 +79,20 @@ function stubContext(options = {}) {
     },
   }
   const ctx = {
-    on(event, handler) {
-      captured.handlers.set(event, handler)
+    /**
+     * 事件登记。
+     *
+     * 合并后同一个插件里两半都会挂 `agent/pre-step`（控制中心的规则/记忆注入 + 任务流半侧的
+     * 「先规划」提醒），桩必须像真 cordis 一样把它们串成**瀑布链**跑，否则后注册的那个会把
+     * 先注册的顶掉，测出来的注入内容只剩一半。`{ prepend: true }` 与真 cordis 一致：插到链首。
+     * 其余事件（`session/event` 这类无 `next` 的通知）按登记顺序逐个调用。
+     */
+    on(event, handler, options) {
+      const list = captured.listeners.get(event) ?? []
+      if (options?.prepend === true) list.unshift(handler)
+      else list.push(handler)
+      captured.listeners.set(event, list)
+      captured.handlers.set(event, event === 'agent/pre-step' ? chainPreStep(list) : notifyAll(list))
     },
     effect(fn) {
       captured.effects.push(fn)
@@ -94,6 +128,19 @@ async function runPreStep(handler, cwd, session = { header: { cwd } }) {
   return handler({ agent: { session }, signal: { aborted: false } }, async () => decision)
 }
 
+/**
+ * 只留**控制中心自己**注入的上下文。
+ *
+ * 合并后同一条 `agent/pre-step` 链上还挂着任务流半侧的「先规划」提醒（正文里带 `<plan-first>`），
+ * 它与规则/记忆的注入逻辑无关；这里按内容滤掉，断言才继续只盯「规则与记忆进没进上下文」。
+ * 任务流半侧自己的提醒行为由 `test/host.test.js` 盯着。
+ */
+function ownInjections(decision) {
+  return decision.messages.filter(
+    (message) => !message.content.some((block) => typeof block.text === 'string' && block.text.includes('<plan-first>')),
+  )
+}
+
 test('host 接线：apply() 注册注入钩子、技能提供方、MCP 运行时与 HTTP 路由', async (t) => {
   if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接（先跑一次 node scripts/install.mjs）')
   const { ctx, captured } = stubContext()
@@ -121,15 +168,16 @@ test('注入：强加载规则正文 + 全局记忆一起进上下文，且第�
 
   const first = await runPreStep(handler, 'D:\\Code\\X', session)
   assert.equal(first.kind, 'enter')
-  assert.equal(first.messages.length, 2, '规则与记忆各一条消息')
-  const text = first.messages.map((message) => message.content.map((block) => block.text).join('')).join('\n---\n')
+  const messages = ownInjections(first)
+  assert.equal(messages.length, 2, '规则与记忆各一条消息')
+  const text = messages.map((message) => message.content.map((block) => block.text).join('')).join('\n---\n')
   assert.match(text, /永远先跑测试/)
   assert.match(text, /本机 Node 走 nvm/)
   assert.match(text, /<system-reminder>/)
 
   // 内容没变 → 同一会话不再重复注入（省 token）。
   const second = await runPreStep(handler, 'D:\\Code\\X', session)
-  assert.equal(second.messages.length, 0)
+  assert.equal(ownInjections(second).length, 0)
 })
 
 test('注入消息的来源是生产者自有的 kind（已退役的 V3 `plugin` 包装会被 format v4 拒收）', async (t) => {
@@ -163,7 +211,7 @@ test('注入：关掉记忆注入后只注入规则', async (t) => {
     { agent: { session: { header: { cwd: 'D:\\Code\\X' } } }, signal: { aborted: false } },
     async () => ({ kind: 'enter', messages: [] }),
   )
-  const text = decision.messages.map((message) => message.content.map((block) => block.text).join('')).join('\n')
+  const text = ownInjections(decision).map((message) => message.content.map((block) => block.text).join('')).join('\n')
   assert.match(text, /永远先跑测试/)
   assert.ok(!text.includes('本机 Node 走 nvm'), '关掉注入后记忆不能进上下文')
   await settings.writeSettings({ memory: { inject: true } })
@@ -183,11 +231,11 @@ test('注入：项目记忆只在工作目录匹配的会话里出现', async (t
   const handler = captured.handlers.get('agent/pre-step')
 
   const matching = await runPreStep(handler, 'D:\\Code\\Demo')
-  const matchingText = matching.messages.map((message) => message.content.map((block) => block.text).join('')).join('\n')
+  const matchingText = ownInjections(matching).map((message) => message.content.map((block) => block.text).join('')).join('\n')
   assert.match(matchingText, /这个项目用 pnpm/)
 
   const other = await runPreStep(handler, 'D:\\Code\\Other')
-  const otherText = other.messages.map((message) => message.content.map((block) => block.text).join('')).join('\n')
+  const otherText = ownInjections(other).map((message) => message.content.map((block) => block.text).join('')).join('\n')
   assert.ok(!otherText.includes('这个项目用 pnpm'), '别的项目不该看到这条记忆')
   await memory.deleteMemory('项目约定.md')
 })
@@ -207,14 +255,14 @@ test('注入：项目规则与全局规则一起注入，且项目规则标出�
     const handler = captured.handlers.get('agent/pre-step')
 
     const matching = await runPreStep(handler, workspace)
-    const text = matching.messages.map((message) => message.content.map((block) => block.text).join('')).join('\n')
+    const text = ownInjections(matching).map((message) => message.content.map((block) => block.text).join('')).join('\n')
     assert.match(text, /PROJECT-BODY/)
     assert.match(text, /GLOBAL-BODY/)
     assert.match(text, /项目规则/, '项目规则要标出来源，模型才知道这是本项目的约定')
 
     // 别的项目看不到这条项目规则。
     const other = await runPreStep(handler, 'D:\\Code\\Other')
-    const otherText = other.messages.map((message) => message.content.map((block) => block.text).join('')).join('\n')
+    const otherText = ownInjections(other).map((message) => message.content.map((block) => block.text).join('')).join('\n')
     assert.ok(!otherText.includes('PROJECT-BODY'))
     assert.match(otherText, /GLOBAL-BODY/)
   } finally {
@@ -232,5 +280,5 @@ test('注入：没有任何规则与记忆时不注入空壳消息', async (t) =
   plugin.apply(ctx)
   const handler = captured.handlers.get('agent/pre-step')
   const decision = await runPreStep(handler, 'D:\\Code\\Empty')
-  assert.equal(decision.messages.length, 0)
+  assert.equal(ownInjections(decision).length, 0, '没有规则与记忆时控制中心不该注入空壳消息')
 })

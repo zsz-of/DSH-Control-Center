@@ -49,6 +49,12 @@ const reactStub = {
   useCallback: (fn) => fn,
   useRef: (initial) => ({ current: initial ?? null }),
   useMemo: (fn) => fn(),
+  // 合并进来的任务流半侧会 `class X extends react.Component`，并在模块顶层
+  // `react.createContext(null)`、渲染期 `react.useContext(...)`：替身少了任何一个，
+  // bundle 连装载都会失败（症状是 `Class extends value undefined`）。
+  Component: class {},
+  createContext: (defaultValue) => ({ __defaultValue: defaultValue }),
+  useContext: (context) => (context === null || context === undefined ? null : (context.__defaultValue ?? null)),
 }
 
 /** primitives 的最小替身：任何组件都渲染成它的 children。 */
@@ -184,7 +190,8 @@ function fixtureState(overrides = {}) {
 test('客户端 bundle：能加载、导出 apply/inject，且只 require 宿主模块', async () => {
   const exports = await loadBundle()
   assert.equal(typeof exports.apply, 'function')
-  assert.deepEqual(exports.inject, ['slots'])
+  // 合并后注入面是两半的并集：控制中心只要 slots，任务流还要 locale 与 sessions。
+  assert.deepEqual(exports.inject, ['slots', 'locale', 'sessions'])
 })
 
 test('客户端 bundle：导入界面用原生复选框（不是滑块开关）', async () => {
@@ -215,7 +222,14 @@ test('客户端 bundle：apply 注册侧边栏入口、整页、会话视图与�
       return () => {}
     },
   }
-  const ctx = { slots, inject: (deps, run) => run(ctx), effect: () => () => {} }
+  const ctx = {
+    slots,
+    inject: (deps, run) => run(ctx),
+    effect: () => () => {},
+    // 合并后任务流半侧也要这两项：locale（界面词典）与 sessions（子代理席位/会话列表）。
+    locale: { register: () => () => {}, bind: () => (key) => key },
+    sessions: { binding: () => undefined },
+  }
   exports.apply(ctx)
   // slots.inject 的回调在插槽出现时才跑，这里立刻执行，模拟插槽已存在。
   for (const [, run] of pending) run()
@@ -323,7 +337,18 @@ test('客户端 bundle：优化按钮在开关关闭/未就绪时返回空，开
       return () => {}
     },
   }
-  exports.apply({ slots, inject: (deps, run) => run({ slots }), effect: (fn) => { fn(); return () => {} } })
+  const ctx = {
+    slots,
+    inject: (deps, run) => run(ctx),
+    effect: (fn) => {
+      fn()
+      return () => {}
+    },
+    // 合并后任务流半侧也要这两项：locale（它在这一步真的注册词典）与 sessions（清理 effect 读会话列表）。
+    locale: { register: () => () => {}, bind: () => (key) => key },
+    sessions: { binding: () => undefined },
+  }
+  exports.apply(ctx)
 
   const button = components['control-center-optimize']
   const veil = components['control-center-optimize-veil']
