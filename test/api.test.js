@@ -109,7 +109,7 @@ function mountApi(launch) {
  * 只用于「runtime 里多一个回调就会改变结果」的用例（目前是会话删除的 `sessionLive`）：
  * `mount()` 走的是真插件，它的 runtime 在测试桩 ctx 下读不到会话，永远答「不活着」。
  */
-function mountRuntime(runtime) {
+function mountRuntime(runtime, ctxOverlay) {
   let route
   api.registerApi(
     {
@@ -119,6 +119,7 @@ function mountRuntime(runtime) {
           return () => {}
         },
       },
+      ...(ctxOverlay ?? {}),
     },
     { mcp: { snapshot: () => ({}), syncInBackground: () => {} }, bumpRevision: () => {}, ...runtime },
   )
@@ -594,4 +595,38 @@ test('API：不支持的 MCP 操作与 reveal 分区都被明确拒绝/接受', 
   const sync = await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'mcp', op: 'sync' }))
   assert.equal(sync.body.ok, true)
   assert.deepEqual(sync.body.state.mcp.items, [])
+})
+
+test('API：/routes 与 /optimize 都拿得到 ctx（以前 handle 漏传 ctx → ReferenceError: ctx is not defined）', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
+  const seen = []
+  const handler = mountRuntime(
+    {
+      optimize: {
+        routes: async () => [{ provider: 'pi-ai', model: 'deepseek-v4' }],
+        optimize: async (text, options) => {
+          seen.push({ text, options })
+          return { text: `${text}（已优化）`, route: options.fallbackRoute, notes: [] }
+        },
+      },
+    },
+    // 真机上 ctx 里挂着 agentDefaultModel：漏传 ctx 时这两个端点就会 500。
+    { agentDefaultModel: { currentSelection: () => ({ provider: 'shusheng', model: 'glm-4.6' }) } },
+  )
+
+  const routes = await call(handler, 'GET', '/api/dsh-control-center/routes')
+  assert.equal(routes.status, 200)
+  assert.deepEqual(routes.body.routes, [{ provider: 'pi-ai', model: 'deepseek-v4' }])
+  assert.deepEqual(routes.body.fallback, { provider: 'shusheng', model: 'glm-4.6' })
+
+  const optimized = await call(
+    handler,
+    'POST',
+    '/api/dsh-control-center/optimize',
+    JSON.stringify({ text: '把提示词写清楚' }),
+  )
+  assert.equal(optimized.status, 200)
+  assert.equal(seen.length, 1)
+  assert.deepEqual(seen[0].options.fallbackRoute, { provider: 'shusheng', model: 'glm-4.6' })
+  assert.equal(optimized.body.text, '把提示词写清楚（已优化）')
 })
