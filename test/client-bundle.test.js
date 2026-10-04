@@ -413,3 +413,44 @@ test('客户端 bundle：只认领控制中心自己的提问卡（别人的卡�
   assert.equal(later.attrs['data-dcc-rule-ask'], '1')
   assert.equal(mine.attrs['data-dcc-rule-ask'], '1', '已经认领过的不再重复处理')
 })
+
+test('客户端：会话列表只列顶层会话，子代理挂在父会话名下一起删', async () => {
+  const exports = await loadBundle()
+  const { sessionRowsOf, sessionSubagentIds, formatSessionTime, readSessionSnapshot } = exports.__internals.sessions
+
+  // 子代理行由平台塞进 `byId` 而不进 `ids`；页面上它们不能各自成行——
+  // 平台对「持久子代理会话」的删除只改状态、不摘行，单独给按钮会留下删不掉的行。
+  const snapshot = {
+    ids: ['parent', 'lone'],
+    byId: {
+      parent: { id: 'parent', displayTitle: '父会话', cwd: 'D:\\Code\\Demo', running: false, updatedAt: 20, projectionValues: {} },
+      lone: { id: 'lone', displayTitle: '', cwd: 'D:\\Code\\Other', running: true, updatedAt: 30, projectionValues: {} },
+      child: { id: 'child', displayTitle: '子代理甲', parentId: 'parent', origin: 'subagent', running: false, updatedAt: 25 },
+      grand: { id: 'grand', displayTitle: '孙子代理', parentId: 'child', origin: 'subagent', running: false, updatedAt: 26 },
+      orphan: { id: 'orphan', displayTitle: '没爹的子代理', parentId: 'gone', origin: 'subagent', running: false, updatedAt: 27 },
+    },
+    phase: 'ready',
+    projectionsBySession: {},
+  }
+
+  const rows = sessionRowsOf(snapshot)
+  assert.deepEqual(rows.map((row) => row.id), ['lone', 'parent'], '顶层会话按更新时间倒序')
+  assert.equal(rows[1].title, '父会话')
+  assert.equal(rows[0].title, 'lone', '没有标题的会话用 id 顶替，不能渲染成空白行')
+  assert.deepEqual(rows[1].subagents, ['child', 'grand'], '子代理（含孙子）挂在父行下')
+  assert.equal(rows[0].subagents.length, 0)
+  // 父会话已经不在了的子代理行不列出来：点删除只会得到一行删不掉的鬼影。
+  assert.equal(rows.some((row) => row.id === 'orphan'), false)
+  assert.deepEqual(sessionSubagentIds(snapshot.byId, 'parent'), ['child', 'grand'])
+  assert.deepEqual(sessionSubagentIds(snapshot.byId, 'lone'), [])
+
+  // 时间：给的是毫秒时间戳，页面按本地时间显示到分钟。
+  assert.match(formatSessionTime(Date.UTC(2026, 0, 2, 3, 4)), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+  assert.equal(formatSessionTime(undefined), '', '没有更新时间就不显示时间')
+  assert.equal(formatSessionTime(0), '', '没有时间戳（0）也不显示')
+
+  // 存储没接上时读出来必须是空快照，而不是抛错或 undefined（面板照常渲染）。
+  const empty = readSessionSnapshot()
+  assert.deepEqual(empty.ids, [])
+  assert.deepEqual(empty.byId, {})
+})

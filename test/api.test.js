@@ -103,6 +103,29 @@ function mountApi(launch) {
   return route.handler
 }
 
+/**
+ * 挂 API 但换一份假 runtime。
+ *
+ * 只用于「runtime 里多一个回调就会改变结果」的用例（目前是会话删除的 `sessionLive`）：
+ * `mount()` 走的是真插件，它的 runtime 在测试桩 ctx 下读不到会话，永远答「不活着」。
+ */
+function mountRuntime(runtime) {
+  let route
+  api.registerApi(
+    {
+      webServer: {
+        register(spec) {
+          route = spec
+          return () => {}
+        },
+      },
+    },
+    { mcp: { snapshot: () => ({}), syncInBackground: () => {} }, bumpRevision: () => {}, ...runtime },
+  )
+  assert.ok(route !== undefined, 'API 没有注册到 webServer')
+  return route.handler
+}
+
 /** 假启动器：只记录「会执行什么命令」，不发真实进程。 */
 function fakeLauncher() {
   const calls = []
@@ -207,16 +230,70 @@ test('API：非法输入返回 400 + 可读原因，且不写盘', async (t) => 
   assert.equal(notFound.status, 404)
 })
 
-test('API：/flags 只暴露输入框按钮需要的开关', async (t) => {
+test('API：/flags 只暴露输入框按钮与两个界面开关需要的开关', async (t) => {
   if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
   const handler = mount()
   const response = await call(handler, 'GET', '/api/dsh-control-center/flags')
-  assert.deepEqual(response.body.flags, { optimize: { enabled: true, available: false } })
+  // `ui` 是「任务页面 / 子代理显示」两个界面开关：客户端两半侧都靠它决定要不要画。
+  assert.deepEqual(response.body.flags, {
+    optimize: { enabled: true, available: false },
+    ui: { taskView: true, subagent: true },
+  })
 
   await settings.writeSettings({ optimize: { enabled: false } })
   const off = await call(handler, 'GET', '/api/dsh-control-center/flags')
   assert.equal(off.body.flags.optimize.enabled, false)
   await settings.writeSettings({ optimize: { enabled: true } })
+})
+
+test('API：删会话走真实文件系统——落点全清、回报清了几处', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
+  const handler = mount()
+  const { mkdir: makeDir, writeFile } = await import('node:fs/promises')
+  const id = 'session-77777777-8888-9999-aaaa-bbbbbbbbbbbb'
+  const content = join(paths.DATA_ROOT, 'sessions', 'proj-api', id, 'session.v4.jsonl.zstd')
+  await makeDir(join(content, '..'), { recursive: true })
+  await writeFile(content, 'A')
+  const snapshot = join(paths.DATA_ROOT, 'rewind-snapshots', id)
+  await makeDir(snapshot, { recursive: true })
+  await writeFile(join(snapshot, 'snap.json'), '{}')
+
+  const response = await call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify({ section: 'session', op: 'delete', ids: [id, id] }))
+  assert.equal(response.status, 200)
+  // 去重后只删一条，正文 + 回滚快照都点到，复核无残留（这一节的全部承诺）。
+  assert.deepEqual(response.body.result.deleted, [{ id, removed: 2, kinds: ['session', 'rewind'] }])
+  assert.equal(response.body.result.removed, 2)
+  assert.deepEqual(response.body.result.remaining, [])
+  assert.equal(existsSync(content), false)
+  assert.equal(existsSync(snapshot), false)
+})
+
+test('API：删会话的坏输入被拒——空名单、非法 id、正在使用中的会话', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
+  const handler = mount()
+  const post = (payload) => call(handler, 'POST', '/api/dsh-control-center/action', JSON.stringify(payload))
+
+  const empty = await post({ section: 'session', op: 'delete', ids: [] })
+  assert.equal(empty.status, 400)
+  assert.match(empty.body.error, /没有指定要删除的会话/)
+
+  const bad = await post({ section: 'session', op: 'delete', ids: ['../evil'] })
+  assert.equal(bad.status, 400)
+  assert.match(bad.body.error, /非法会话 id/)
+
+  const badOp = await post({ section: 'session', op: 'rename', ids: ['a'] })
+  assert.equal(badOp.status, 400)
+  assert.match(badOp.body.error, /会话分区不支持的操作/)
+
+  // 「本进程还活着」的会话必须被拒：删完内存里的还会再写回来，比拒绝更糟。
+  const live = await call(
+    mountRuntime({ sessionLive: (id) => id === 'live-one' }),
+    'POST',
+    '/api/dsh-control-center/action',
+    JSON.stringify({ section: 'session', op: 'delete', ids: ['live-one'] }),
+  )
+  assert.equal(live.status, 400)
+  assert.match(live.body.error, /正在本进程中使用/)
 })
 
 test('API：设置保存后立即反映在 /state 与 /flags 上', async (t) => {

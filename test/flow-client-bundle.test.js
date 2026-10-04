@@ -109,8 +109,8 @@ test('apply() 注册语言包、样式与唯一的视图条目', () => {
   assert.equal(captured.locales[0].dict.zh['flow.thinking.live'], '思考中')
   assert.deepEqual(
     captured.effects,
-    ['chat-flow: dictionaries', 'chat-flow: purge deleted sessions'],
-    '语言包注册与「删除会话后的残留清理」都应挂在 effect 上，随插件卸载回收',
+    ['chat-flow: dictionaries', 'chat-flow: purge deleted sessions', 'chat-flow: task view switch'],
+    '语言包注册、「删除会话后的残留清理」与「任务页面开关」都应挂在 effect 上，随插件卸载回收',
   )
 
   // 合并后核心组也会注入它自己的样式表，所以这里只认任务流那一张（按各自的固定 id 找）。
@@ -1008,14 +1008,16 @@ test('取消键留下的半截过程：标成「被打断」，点开才加载�
 
 test('视图层错误边界：本插件自己的渲染错误降级成错误摘要，而非让整块视图让位', async () => {
   // 这一条同样需要「createElement 不立刻调用组件」的探针 React 才能拿到边界元素本身。
-  const probeModule = await loadBundle({ react: createProbeReact().react })
+  // 组件现在会调 hook（「子代理显示」开关），所以必须用探针的 `mount` 跑（直接调用没有槽位）。
+  const probe = createProbeReact()
+  const probeModule = await loadBundle({ react: probe.react })
   const { views } = probeModule.exports.__internals
   const t = (key) => key
-  const element = views.TaskFlowView({
+  const element = probe.mount(views.TaskFlowView, {
     t,
     useChat: () => ({}),
     useSession: () => ({}),
-  })
+  }).value
   const Boundary = element.type
   assert.equal(typeof Boundary.getDerivedStateFromError, 'function', 'TaskFlowView 必须把主体包在错误边界里')
 
