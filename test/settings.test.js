@@ -123,12 +123,25 @@ test('设置：工作区豁免是去重后的路径清单，写坏的类型丢�
   await settings.writeSettings({ rules: { allowedWorkspaces: [] } })
 })
 
-test('设置：DSH 默认模型从 settings.yaml 读出；缺失时返回 undefined', async () => {
-  assert.equal(await settings.dshDefaultModel(), undefined)
+test('设置：DSH 默认模型优先取服务，服务缺席/形状不合法时退回 settings.yaml', async () => {
+  // 服务就绪时只认服务读到的值（`lib/index.js` 用 `ctx.inject(['agentDefaultModel'])` 接成
+  // `runtime.readDefaultModel`，这里直接传同形状的取值函数）。
+  assert.deepEqual(await settings.dshDefaultModel(() => ({ provider: 'shusheng', model: 'glm-4.6', reasoningEffort: 'high' })), {
+    provider: 'shusheng',
+    model: 'glm-4.6',
+    reasoningEffort: 'high',
+  })
+  assert.equal(await settings.dshDefaultModel(() => ({ model: 'glm-4.6' })), undefined, '缺 provider 不算数')
+  assert.equal(await settings.dshDefaultModel(), undefined, '没有服务、也没有文件 → undefined')
   await writeFile(
     join(harness, 'settings.yaml'),
     ['ui-theme:', '  preference: system', 'agent-default-model:', '  provider: deepseek-official', '  model: deepseek-v4-flash', '  reasoningEffort: max', ''].join('\n'),
     'utf8',
   )
   assert.deepEqual(await settings.dshDefaultModel(), { provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  assert.deepEqual(
+    await settings.dshDefaultModel(() => ({})),
+    { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    '服务给的形状不合法时要继续走文件兜底',
+  )
 })
