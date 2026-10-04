@@ -20,6 +20,8 @@
  *
  * 装完会用 `dsh --profile <p> --dump-config` **组合一次配置并断言结果**——
  * 这是不启动服务就能验证「脏配置会不会把桌面壳搞崩」的手段。
+ * 找不到 CLI（老壳/新壳两种布局都没命中，可用 `DSH_BIN` 指定）或 profile 由
+ * 桌面应用独占管理（`desktop`）时，这一步记为「跳过」而不是失败。
  *
  * 用法：
  *   node scripts/install.mjs                 # 安装到 web profile
@@ -87,23 +89,63 @@ async function link(source, target, dryRun) {
 }
 
 /**
+ * 找出可用的 dsh CLI。
+ *
+ * 布局有两代：老版桌面壳把 CLI 装在 `$DSH_HOME/profiles/node_modules`，
+ * 新版（DSH NEXT）由 Electron 应用自带，放在应用目录的 `resources/app/node_modules`。
+ * 两者都找不到时可以用 `DSH_BIN` 环境变量直接指定 bin.js。
+ *
+ * @returns 绝对路径；找不到时 `undefined`。
+ */
+function findCliBin() {
+  const override = process.env.DSH_BIN
+  if (typeof override === 'string' && override.length > 0 && existsSync(override)) return override
+  const candidates = [join(harnessRoot(), 'profiles', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')]
+  const bases = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA]
+  for (const base of bases) {
+    if (typeof base !== 'string' || base.length === 0) continue
+    for (const product of ['DSH NEXT', 'DSH Desktop', 'dsh-desktop']) {
+      candidates.push(join(base, product, 'resources', 'app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+      candidates.push(
+        join(base, 'Programs', product, 'resources', 'app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+      )
+    }
+  }
+  return candidates.find((path) => existsSync(path))
+}
+
+/**
  * 用 dsh CLI 组合一次配置并断言插件行在。
  *
  * 组合失败会以非零退出码 + 原因返回，此时应立即回滚——绝不让脏配置留到重启后的桌面壳去踩。
  *
+ * 两种「校验不了」的情况不算失败：找不到 CLI（老壳/新壳布局都没命中）、
+ * 或者 profile 被桌面应用独占管理（`desktop` 这个名字 CLI 一律拒绝组合）。
+ * 它们记为 `skipped`，由调用方提示用户重启桌面壳亲眼确认。
+ *
  * @param profile - profile 名。
- * @returns `{ ok, detail }`。
+ * @returns `{ ok, skipped?, detail }`。
  */
 function validateComposition(profile) {
-  const bin = join(harnessRoot(), 'profiles', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-  if (!existsSync(bin)) return { ok: false, detail: `找不到 dsh CLI：${bin}` }
+  const bin = findCliBin()
+  if (bin === undefined) {
+    return { ok: true, skipped: true, detail: '找不到 dsh CLI，跳过组合校验（可用 DSH_BIN=<bin.js 路径> 指定）' }
+  }
   const result = spawnSync(process.execPath, [bin, '--profile', profile, '--dump-config'], {
     encoding: 'utf8',
     timeout: 180000,
     windowsHide: true,
   })
   if (result.status !== 0) {
-    return { ok: false, detail: `--dump-config 退出码 ${result.status}：${(result.stderr ?? '').slice(0, 600)}` }
+    const stderr = result.stderr ?? ''
+    if (stderr.includes('managed exclusively')) {
+      return {
+        ok: true,
+        skipped: true,
+        detail: `profile "${profile}" 由桌面应用独占管理，CLI 拒绝组合——重启桌面壳即可生效`,
+      }
+    }
+    return { ok: false, detail: `--dump-config 退出码 ${result.status}：${stderr.slice(0, 600)}` }
   }
   const text = result.stdout ?? ''
   if (!new RegExp(`^\\s*- id: ${PLUGIN_ID}$`, 'm').test(text)) {
@@ -189,15 +231,19 @@ async function main() {
 
   const validation = validateComposition(options.profile)
   console.log('')
-  if (validation.ok) {
-    console.log(`✅ ${validation.detail}`)
-    console.log('\n下一步：重启 DSH Desktop（桌面壳只在启动时组合 profile），然后点侧边栏底部「设置」上方的「控制中心」。')
-    console.log('   客户端 bundle 已被浏览器按 URL 缓存：重启后若看不到新界面，用 Ctrl+R 强制刷新一次页面。')
-  } else {
+  if (!validation.ok) {
     console.log(`❌ 组合配置校验失败：${validation.detail}`)
     console.log('   请执行 `node scripts/install.mjs --revert` 回滚，再排查原因。')
     process.exitCode = 1
+    return
   }
+  console.log(`${validation.skipped ? '⚠️' : '✅'} ${validation.detail}`)
+  if (validation.skipped) {
+    console.log('   这一步只改了 profile 的 dependencies 与 bundles，改坏了也只是少挂/多挂一个插件；')
+    console.log('   重启后再跑一次本脚本（或看桌面壳日志）即可确认。')
+  }
+  console.log('\n下一步：重启 DSH Desktop（桌面壳只在启动时组合 profile），然后点侧边栏底部「设置」上方的「控制中心」。')
+  console.log('   客户端 bundle 已被浏览器按 URL 缓存：重启后若看不到新界面，用 Ctrl+R 强制刷新一次页面。')
 }
 
 await main()
