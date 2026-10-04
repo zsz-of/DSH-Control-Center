@@ -230,14 +230,12 @@ test('API：非法输入返回 400 + 可读原因，且不写盘', async (t) => 
   assert.equal(notFound.status, 404)
 })
 
-test('API：/flags 只暴露输入框按钮与两个界面开关需要的开关', async (t) => {
+test('API：/flags 只暴露输入框优化按钮需要的开关', async (t) => {
   if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
   const handler = mount()
   const response = await call(handler, 'GET', '/api/dsh-control-center/flags')
-  // `ui` 是「任务页面 / 子代理显示」两个界面开关：客户端两半侧都靠它决定要不要画。
   assert.deepEqual(response.body.flags, {
     optimize: { enabled: true, available: false },
-    ui: { taskView: true, subagent: true },
   })
 
   await settings.writeSettings({ optimize: { enabled: false } })

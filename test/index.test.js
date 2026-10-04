@@ -82,9 +82,8 @@ function stubContext(options = {}) {
     /**
      * 事件登记。
      *
-     * 合并后同一个插件里两半都会挂 `agent/pre-step`（控制中心的规则/记忆注入 + 任务流半侧的
-     * 「先规划」提醒），桩必须像真 cordis 一样把它们串成**瀑布链**跑，否则后注册的那个会把
-     * 先注册的顶掉，测出来的注入内容只剩一半。`{ prepend: true }` 与真 cordis 一致：插到链首。
+     * `agent/pre-step` 在真 cordis 里是**瀑布链**：桩也按链跑（后注册的不会顶掉先注册的），
+     * `{ prepend: true }` 与真 cordis 一致插到链首。
      * 其余事件（`session/event` 这类无 `next` 的通知）按登记顺序逐个调用。
      */
     on(event, handler, options) {

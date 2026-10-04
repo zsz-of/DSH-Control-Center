@@ -2,7 +2,7 @@
   "name": "dsh-control-center",
   "version": "0.4.0",
   "private": true,
-  "description": "统一的规则 / 技能 / 记忆 / MCP / 备份 图形化管理设置页 + 输入框上的 AI 提示词优化 + 对话任务流视图（DSH 客户端插件，双面孔包）",
+  "description": "统一的规则 / 技能 / 记忆 / MCP / 备份 图形化管理设置页 + 输入框上的 AI 提示词优化 + 会话彻底删除（DSH 客户端插件，host + web 双面孔）",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "engines": {
@@ -39,7 +39,6 @@
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-chat",
         "@deepseek-ai/dsh-client-locale"
       ]
     }

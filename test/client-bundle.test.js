@@ -190,8 +190,8 @@ function fixtureState(overrides = {}) {
 test('客户端 bundle：能加载、导出 apply/inject，且只 require 宿主模块', async () => {
   const exports = await loadBundle()
   assert.equal(typeof exports.apply, 'function')
-  // 合并后注入面是两半的并集：控制中心只要 slots，任务流还要 locale 与 sessions。
-  assert.deepEqual(exports.inject, ['slots', 'locale', 'sessions'])
+  // 注入面：`slots` 注册插槽，`sessions` 给「会话删除」页读会话列表并摘行。
+  assert.deepEqual(exports.inject, ['slots', 'sessions'])
 })
 
 test('客户端 bundle：导入界面用原生复选框（不是滑块开关）', async () => {
@@ -226,8 +226,7 @@ test('客户端 bundle：apply 注册侧边栏入口、整页、会话视图与�
     slots,
     inject: (deps, run) => run(ctx),
     effect: () => () => {},
-    // 合并后任务流半侧也要这两项：locale（界面词典）与 sessions（子代理席位/会话列表）。
-    locale: { register: () => () => {}, bind: () => (key) => key },
+    // 会话列表与摘行由 `ctx.sessions` 提供（平台没有删会话的 API）。
     sessions: { binding: () => undefined },
   }
   exports.apply(ctx)
@@ -357,8 +356,7 @@ test('客户端 bundle：优化按钮在开关关闭/未就绪时返回空，开
       fn()
       return () => {}
     },
-    // 合并后任务流半侧也要这两项：locale（它在这一步真的注册词典）与 sessions（清理 effect 读会话列表）。
-    locale: { register: () => () => {}, bind: () => (key) => key },
+    // 会话列表与摘行由 `ctx.sessions` 提供（平台没有删会话的 API）。
     sessions: { binding: () => undefined },
   }
   exports.apply(ctx)
