@@ -227,10 +227,10 @@ test('客户端 bundle：apply 注册侧边栏入口、整页、会话视图与�
     'shell.overlay',
     'sidebar.footer.action',
   ])
-  // 会话视图要排在「对话」(0) 与「轨迹」(10) 之间。
+  // 会话视图要排在「对话」(0) 与「轨迹」(10) 之间。NEXT 的 slots.register 只认 priority。
   const view = registered.find((item) => item.options.name === 'conversation.view')
   assert.equal(view.options.id, 'control-center-rules')
-  assert.equal(view.options.order, 5)
+  assert.equal(view.options.priority, 5)
   assert.equal(view.options.label(), '规则')
 
   // 样式表必须真的被注进去，而且要是个像样的字符串。
