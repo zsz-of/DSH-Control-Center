@@ -10,7 +10,7 @@
 import { strict as assert } from 'node:assert'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { createZip } from '../lib/zip.js'
 
@@ -162,4 +162,29 @@ test('备份：不是本插件导出的 zip 会被明确拒绝', () => {
     { name: 'manifest.json', data: Buffer.from(JSON.stringify({ format: backup.BACKUP_FORMAT, version: 99 })) },
   ])
   assert.throws(() => backup.analyzeBackup(futureVersion), /高于当前插件支持/)
+})
+
+test('备份：桌面壳的 Chromium 运行时目录不进包（那里的 LOCK / Cookies 会让整次备份报 EBUSY）', async () => {
+  const chromium = join(harness, 'electron-user-data', 'Local Storage', 'leveldb', 'LOCK')
+  await mkdir(dirname(chromium), { recursive: true })
+  await writeFile(chromium, 'LOCK', 'utf8')
+  await mkdir(join(harness, 'electron-user-data', 'Network'), { recursive: true })
+  await writeFile(join(harness, 'electron-user-data', 'Network', 'Cookies'), 'cookie', 'utf8')
+
+  const pluginDataFile = join(harness, 'some-plugin', 'sub', 'data.json')
+  await mkdir(dirname(pluginDataFile), { recursive: true })
+  await writeFile(pluginDataFile, '{}', 'utf8')
+
+  const created = await backup.createBackup(['pluginData'])
+  const analysis = backup.analyzeBackup(await readFile(created.file))
+  const names = analysis.entries.map((entry) => entry.name)
+  assert.equal(
+    names.some((name) => name.includes('electron-user-data')),
+    false,
+    'Chromium 运行时目录不该进包：它的 LOCK / Cookies 常驻被进程独占的句柄，读它就是 EBUSY',
+  )
+  assert.ok(
+    names.some((name) => name.endsWith('some-plugin/sub/data.json')),
+    '普通插件数据照旧要进包（deny 名单只排除 Chromium 运行时目录）',
+  )
 })
