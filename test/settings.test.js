@@ -145,3 +145,25 @@ test('设置：DSH 默认模型优先取服务，服务缺席/形状不合法时
     '服务给的形状不合法时要继续走文件兜底',
   )
 })
+
+test('设置：模型等级只认 1-3，屏蔽项与提供方层级去重；写入必须真的落盘', async () => {
+  const normalized = settings.normalizeSettings({
+    models: {
+      autoSwitch: 'yes',
+      tiers: { 'p1/m1': 1, 'p1/m2': '2', 'p1/m3': 4, 'p1/m4': 'x', '': 1, '  ': 2 },
+      blocked: ['a/b', 'a/b', '  ', 42],
+      providerOrder: ['p1', 'p2', 'p1', ''],
+    },
+  })
+  assert.equal(normalized.models.autoSwitch, true, '不是布尔就退回默认（开）')
+  assert.deepEqual(normalized.models.tiers, { 'p1/m1': 1, 'p1/m2': 2 }, '等级只认 1|2|3，其余丢弃')
+  assert.deepEqual(normalized.models.blocked, ['a/b'], '屏蔽项去重、丢掉非字符串')
+  assert.deepEqual(normalized.models.providerOrder, ['p1', 'p2'], '提供方层级去重、丢掉空串')
+
+  // 写盘往返：`writeSettings` 必须把 models 合并进去（漏了它时页面「保存」等于什么都没发生）。
+  await settings.writeSettings({ models: { autoSwitch: false, tiers: { 'p1/m1': 3 } } })
+  const after = await settings.readSettings()
+  assert.equal(after.models.autoSwitch, false)
+  assert.deepEqual(after.models.tiers, { 'p1/m1': 3 })
+  await settings.writeSettings({ models: { autoSwitch: true, tiers: {} } })
+})
