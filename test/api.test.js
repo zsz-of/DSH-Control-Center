@@ -91,7 +91,12 @@ function mountApi(launch) {
         },
       },
     },
-    { mcp: { snapshot: () => ({}) } },
+    {
+      // 假 MCP 运行时：只需要 API 层实际用到的那几个成员。
+      // `syncInBackground` 取代了过去的 `sync`（HTTP 路径不再 await 对账），这里补上即可。
+      mcp: { snapshot: () => ({}), syncInBackground: () => {} },
+      bumpRevision: () => {},
+    },
     { launch },
   )
   assert.ok(route !== undefined, 'API 没有注册到 webServer')
