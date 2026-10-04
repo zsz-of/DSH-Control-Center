@@ -169,7 +169,7 @@ test('真实 React：所有页面在完整 state 下都能 renderToString', asyn
   assert.doesNotMatch(globalHtml, /选择文件夹/)
   const projectHtml = renderToString(React.createElement(tabs.RulesSection, { state, act, busy: false, error: null, scope: 'project', workspace: 'D:\\Code\\Demo' }))
   assert.match(projectHtml, /项目：D:\\Code\\Demo/)
-  for (const name of ['McpTab', 'SkillsTab', 'MemoryTab', 'ScanTab', 'BackupTab', 'SettingsTab']) {
+  for (const name of ['ModelTierTab', 'McpTab', 'SkillsTab', 'MemoryTab', 'ScanTab', 'BackupTab', 'SettingsTab']) {
     const html = renderToString(React.createElement(tabs[name], { state, act, busy: false, error: null }))
     assert.ok(html.length > 0, `${name} 渲染为空`)
   }

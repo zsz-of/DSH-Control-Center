@@ -181,6 +181,19 @@ function fixtureState(overrides = {}) {
       backup: { retention: 20, snapshotBeforeImport: true },
       scan: { disabled: [], custom: [] },
       ui: { defaultTab: 'rule' },
+      models: { autoSwitch: true, tiers: {}, blocked: [], providerOrder: [] },
+    },
+    // 「模型」页读的是这一段：策略 + 平台给的模型目录（host 已按策略排过序）。
+    models: {
+      autoSwitch: true,
+      tiers: { 'p1/m1': 1 },
+      blocked: ['p2/m2'],
+      providerOrder: ['p1', 'p2'],
+      available: true,
+      providers: [
+        { id: 'p1', name: '一号', models: [{ id: 'm1', name: '强' }, { id: 'm2', name: '中' }] },
+        { id: 'p2', name: '二号', models: [{ id: 'm2', name: '中' }] },
+      ],
     },
     optimize: { enabled: true, provider: '', model: '', reasoningEffort: '', prompt: '', available: true, hasCustomPrompt: false },
     ...overrides,
@@ -269,6 +282,7 @@ test('客户端 bundle：七个页面在真实形状的 state 下都能渲染', 
   const act = { run: async () => ({ ok: false }), refresh: async () => {}, report: () => {}, flash: () => {} }
   const pages = {
     RulesSection: () => RulesSectionProbe(tabs.RulesSection, state, act),
+    ModelTierTab: () => tabs.ModelTierTab({ state, act, busy: false, error: null }),
     McpTab: () => tabs.McpTab({ state, act, busy: false, error: null }),
     SkillsTab: () => tabs.SkillsTab({ state, act, busy: false, error: null }),
     MemoryTab: () => tabs.MemoryTab({ state, act, busy: false, error: null }),
@@ -596,4 +610,91 @@ test('客户端：菜单项只发起请求（关掉菜单、把这条会话交�
   assert.equal(state.phase, 'confirm', '交给确认框，绝不能直接开删')
   assert.equal(state.request.title, '一号对话')
   assert.equal(state.request.cwd, 'D:\\Code\\Demo')
+})
+
+/* ─────────────────────────── 自动换模型（客户端侧） ─────────────────────────── */
+
+/** 把元素树里所有字符串拼起来（断言文案用）。 */
+function collectStrings(element, found = []) {
+  if (element === null || element === undefined) return found
+  if (typeof element === 'string') {
+    found.push(element)
+    return found
+  }
+  if (Array.isArray(element)) {
+    for (const item of element) collectStrings(item, found)
+    return found
+  }
+  if (typeof element !== 'object' || element.type === undefined) return found
+  collectStrings(element.props?.children, found)
+  return found
+}
+
+/** 收集元素树里满足条件的元素（断言控件用）。 */
+function findAll(element, match, found = []) {
+  if (element === null || element === undefined) return found
+  if (Array.isArray(element)) {
+    for (const item of element) findAll(item, match, found)
+    return found
+  }
+  if (typeof element !== 'object' || element.type === undefined) return found
+  if (match(element)) found.push(element)
+  findAll(element.props?.children, match, found)
+  return found
+}
+
+test('客户端：「模型」页把提供方层级、模型等级与屏蔽项渲染出来', async () => {
+  const exports = await loadBundle()
+  const state = fixtureState()
+  const act = { run: async () => ({ ok: false }), refresh: async () => {}, report: () => {}, flash: () => {} }
+  const tree = exports.__internals.tabs.ModelTierTab({ state, act, busy: false, error: null })
+
+  const selects = findAll(tree, (element) => element.type === 'select')
+  const boxes = findAll(tree, (element) => element.type === 'input' && element.props?.type === 'checkbox')
+  const tierBoxes = boxes.filter((box) => box.props.role !== 'switch')
+  assert.equal(selects.length, 3, '两个 p1 模型 + 一个 p2 模型各一个等级下拉')
+  assert.equal(selects[0].props.value, '1', '登记过 1 级的模型要选中 1 级')
+  assert.ok(
+    selects[0].props.children.some((option) => option.props.children === '1 级 · 最强'),
+    '等级下拉里要有「1 级 · 最强」这一档（1 = 最强是用户裁决）',
+  )
+  assert.equal(selects[1].props.value, '', '没登记等级的模型显示「未分级」')
+  assert.equal(boxes.length, 4, '三个「不自动切换」+ 一个「自动换模型」总开关')
+  assert.equal(tierBoxes.length, 3)
+  assert.equal(tierBoxes.filter((box) => box.props.checked).length, 1, '屏蔽项要勾上（p2/m2）')
+  const text = collectStrings(tree).join(' ')
+  assert.match(text, /1\. 一号/)
+  assert.match(text, /2\. 二号/)
+  assert.match(text, /向下/)
+})
+
+test('客户端：换源提示条说清「从哪换到哪」，没有候选时指路控制中心', async () => {
+  const exports = await loadBundle()
+  const { SwitchNoticeChip } = exports.__internals.composer
+  const ok = SwitchNoticeChip({
+    notice: { ok: true, from: { provider: 'p1', model: 'strong' }, to: { provider: 'p2', model: 'mid' } },
+    onDismiss: () => {},
+  })
+  const okText = collectStrings(ok).join(' ')
+  assert.match(okText, /已自动换源/)
+  assert.match(okText, /p1\/strong/)
+  assert.match(okText, /p2\/mid/)
+
+  const bad = SwitchNoticeChip({ notice: { ok: false, from: { provider: 'p1', model: 'strong' } }, onDismiss: () => {} })
+  assert.match(collectStrings(bad).join(' '), /没有可自动切换的模型/)
+})
+
+test('客户端：换源通知按会话存放，acknowledged 之后就不再高亮', async () => {
+  const exports = await loadBundle()
+  const store = exports.__internals.composer.modelSwitchStore
+  const seen = []
+  const unsubscribe = store.subscribe(() => seen.push(store.get('s1')))
+  store.set('s1', { at: 1, acknowledged: false, ok: true })
+  assert.equal(store.get('s1').acknowledged, false)
+  store.set('s1', { at: 1, acknowledged: true, ok: true })
+  assert.equal(store.get('s1').acknowledged, true)
+  assert.equal(seen.length, 2, '两次写入各通知一次')
+  store.set('s1', null)
+  assert.equal(store.get('s1'), null)
+  unsubscribe()
 })

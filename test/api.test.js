@@ -631,3 +631,45 @@ test('API：/routes 与 /optimize 的默认模型走 runtime.readDefaultModel（
   assert.deepEqual(seen[0].options.fallbackRoute, { provider: 'shusheng', model: 'glm-4.6' })
   assert.equal(optimized.body.text, '把提示词写清楚（已优化）')
 })
+
+test('API：模型策略能保存、/state 带得出目录与策略、/switch 读得回也确认得掉', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
+  const handler = mountRuntime({
+    // 桩 runtime 里塞一条「刚换过源」的通知：GET 读得到、POST 能确认。
+    modelSwitches: new Map([['s1', { at: 1, acknowledged: false, ok: true, from: { provider: 'p1', model: 'a' }, to: { provider: 'p2', model: 'b' } }]]),
+  })
+
+  const state = await call(handler, 'GET', '/api/dsh-control-center/state')
+  assert.equal(state.status, 200)
+  assert.equal(state.body.state.models.autoSwitch, true, '策略默认开着')
+  assert.deepEqual(state.body.state.models.providers, [], '桩里没有模型目录 → 空清单')
+  assert.equal(state.body.state.models.available, false, '目录取不到要如实说，而不是假装有')
+
+  const saved = await call(
+    handler,
+    'POST',
+    '/api/dsh-control-center/action',
+    JSON.stringify({
+      section: 'model',
+      op: 'save',
+      models: { autoSwitch: false, tiers: { 'p1/m1': 2, 'p1/m2': 9 }, blocked: ['p2/m2'], providerOrder: ['p1', 'p2'] },
+    }),
+  )
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.result.models.autoSwitch, false)
+  assert.deepEqual(saved.body.result.models.tiers, { 'p1/m1': 2 }, '越界的等级写不进去')
+  assert.deepEqual(saved.body.result.models.blocked, ['p2/m2'])
+
+  const read = await call(handler, 'GET', '/api/dsh-control-center/switch?session=s1')
+  assert.equal(read.body.switch.ok, true)
+  assert.equal(read.body.switch.acknowledged, false)
+  const ack = await call(handler, 'POST', '/api/dsh-control-center/switch', JSON.stringify({ session: 's1' }))
+  assert.equal(ack.body.acknowledged, true)
+  const again = await call(handler, 'GET', '/api/dsh-control-center/switch?session=s1')
+  assert.equal(again.body.switch.acknowledged, true, '确认过就不再高亮')
+  const unknown = await call(handler, 'GET', '/api/dsh-control-center/switch?session=别的')
+  assert.equal(unknown.body.switch, null)
+
+  // 复位：别把 autoSwitch=false 留给同文件后面的用例。
+  await settings.writeSettings({ models: { autoSwitch: true, tiers: {}, blocked: [], providerOrder: [] } })
+})
