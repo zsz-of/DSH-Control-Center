@@ -188,3 +188,23 @@ test('备份：桌面壳的 Chromium 运行时目录不进包（那里的 LOCK /
     '普通插件数据照旧要进包（deny 名单只排除 Chromium 运行时目录）',
   )
 })
+
+test('备份：语音输入插件的模型缓存不进包（228 MB，可重新下载，不是用户配置）', async () => {
+  const model = join(harness, 'speech-to-text', 'sensevoice', 'models', 'sensevoice-onnx', 'model.int8.onnx')
+  await mkdir(dirname(model), { recursive: true })
+  await writeFile(model, 'x', 'utf8')
+
+  const created = await backup.createBackup(['pluginData'])
+  const analysis = backup.analyzeBackup(await readFile(created.file))
+  assert.equal(
+    analysis.entries.some((entry) => entry.name.includes('speech-to-text')),
+    false,
+    '模型缓存不进包：它 228 MB，超过单文件上限本来也打不进去，留着只会每次备份都报一条「跳过」',
+  )
+  const stats = created.stats.find((section) => section.id === 'pluginData')
+  assert.equal(
+    stats.skipped.some((item) => item.includes('speech-to-text')),
+    false,
+    '排除掉之后就不该再出现「超出上限被跳过」的提示',
+  )
+})
