@@ -538,7 +538,7 @@ function ssrSeat(options = {}) {
   }
 }
 
-test('SSR：子代理席位经上下文一路传到深处子代理卡（报告之后内联一块「子代理过程」）', (t) => {
+test('SSR：【用户要求暂时停用】子代理过程面板不再内联进卡片（席位传进来也不画）', (t) => {
   if (!ready) return t.skip('缺少 profile 里的 react / react-dom')
   const snapshot = makeSnapshot([
     userNode('u1', 1, '干活'),
@@ -548,15 +548,9 @@ test('SSR：子代理席位经上下文一路传到深处子代理卡（报告�
 
   // 展开所有折叠体之后才看得到卡片本体（与其它折叠体一样是懒加载）。
   const html = withThinkingOpen((sessionId) => render(snapshot, { sessionId, agentSeat: seat }), ssrStorage)
-  assert.match(html, /data-dcf-subagent="true"/, '席位在 → 过程面板挂上了')
-  assert.match(html, /子代理过程/)
-  assert.match(html, /data-phase="idle"/)
-  assert.match(html, /data-dcf-subagent-open="true"/, '面板自带「打开子会话」入口')
-  // 面板挂在报告之后（卡片本体里）。
-  const body = html.indexOf('dcf-cardbody')
-  const note = html.indexOf('已派出子会话，报告稍后到达')
-  const panel = html.indexOf('data-dcf-subagent="true"')
-  assert.ok(body >= 0 && note > body && panel > note, '顺序必须是：报告 → 过程面板')
+  assert.equal(html.includes('data-dcf-subagent'), false, '停用后不再内联「子代理过程」面板')
+  assert.equal(html.includes('子代理过程'), false)
+  // 面板曾挂在报告之后；恢复渲染时把那条顺序断言（报告 → 过程面板）一起抄回来。
 })
 
 test('SSR：没有席位时不画过程面板（宿主缺 ui-session 的装配里不该多一个空壳）', (t) => {
@@ -571,7 +565,7 @@ test('SSR：没有席位时不画过程面板（宿主缺 ui-session 的装配�
   assert.equal(html.includes('子代理过程'), false)
 })
 
-test('SSR：会话有子代理时，任务视图顶部出现「子代理」下拉（默认收起）', (t) => {
+test('SSR：【用户要求暂时停用】顶部不再出现「子代理」下拉（有子代理也不画）', (t) => {
   if (!ready) return t.skip('缺少 profile 里的 react / react-dom')
   const snapshot = makeSnapshot([userNode('u1', 1, '干活')])
   const { seat } = ssrSeat({
@@ -580,14 +574,9 @@ test('SSR：会话有子代理时，任务视图顶部出现「子代理」下�
     },
   })
   const html = render(snapshot, { sessionId: 's1', agentSeat: seat })
-  assert.match(html, /data-dcf-agentbar="true"/, '有子代理才长这行工具条')
-  assert.match(html, /data-dcf-agenttrigger="true"/)
-  assert.match(html, /data-running="true"/)
-  assert.match(html, /1 个进行中/, '计数取自会话列表快照的 running')
-  // 行内容（标题 / 状态图标）要靠点开菜单，SSR 点不了 —— 那是 `subagent-process.test.js` 的地盘。
-  assert.equal(html.includes('data-dcf-agentmenu'), false, '默认收起：菜单不进 DOM')
-  // 工具条在正文之前（它是这一页的顶部工具行）。
-  assert.ok(html.indexOf('data-dcf-agentbar') < html.indexOf('dcf-main'), '工具条在正文之上')
+  assert.equal(html.includes('data-dcf-agentbar'), false, '停用后不再画顶部工具条，哪怕快照里有进行中的子代理')
+  assert.equal(html.includes('data-dcf-agenttrigger'), false)
+  // 工具条的计数/菜单断言（1 个进行中、默认收起）随功能一起停用；恢复时从 git 历史抄回。
 })
 
 test('SSR：没有子代理时工具条完全不出现（不留空行）', (t) => {

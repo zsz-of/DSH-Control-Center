@@ -76,16 +76,44 @@ function stubCtx() {
   return { ctx, captured, t: (key, params) => translate('chat-flow', key, params) }
 }
 
-/** 装载 bundle 并应用一次，返回注册过的视图条目与文案函数。 */
+/**
+ * 【用户要求暂时停用任务视图与子代理】任务视图的注册入口已在 `lib/client-flow/99-tail.js`
+ * 里注释掉，注册账本里因此找不到它了。渲染 / 派生类用例改从 `__internals.views` 取组件本体，
+ * 让这些用例照旧覆盖视图内部逻辑；「不再注册」这件事由注册面用例（本节第一条）单独守着。
+ *
+ * @param exports - bundle 的导出对象。
+ * @param captured - {@link stubCtx} 记下的账本。
+ * @param t - 文案函数。
+ * @returns 视图条目（`options` 只保留渲染用例读得到的字段）。
+ */
+function flowViewOf(exports, captured, t) {
+  const registered = captured.registered.find(
+    (item) => item.options.name === 'conversation.view' && item.options.id === 'flow',
+  )
+  if (registered !== undefined) return registered
+  return {
+    options: {
+      name: 'conversation.view',
+      id: 'flow',
+      order: 5,
+      locale: 'chat-flow',
+      label: () => t('view.flow'),
+      children: exports.__internals.nativeViewChildren(),
+    },
+    component: exports.__internals.views.TaskFlowView,
+  }
+}
+
+/** 装载 bundle 并应用一次，返回视图条目（注册面已停用，见 {@link flowViewOf}）与文案函数。 */
 function bootView() {
   const { ctx, captured, t } = stubCtx()
   client.apply(ctx)
   for (const [, run] of captured.pending) run()
   // 合并后同一个插槽上有两条视图：控制中心自己的「规则」与任务流。这里只要任务流那条。
-  const view = captured.registered.find(
+  const registered = captured.registered.find(
     (item) => item.options.name === 'conversation.view' && item.options.id === 'flow',
   )
-  return { captured, view, t }
+  return { captured, registered, view: flowViewOf(client, captured, t), t }
 }
 
 const module0 = await loadBundle()
@@ -102,15 +130,15 @@ test('插件声明依赖 slots / locale / sessions', () => {
   assert.equal(typeof client.apply, 'function')
 })
 
-test('apply() 注册语言包、样式与唯一的视图条目', () => {
-  const { captured, view, t } = bootView()
+test('【用户要求暂时停用】任务视图不再注册；语言包与样式照旧挂上', () => {
+  const { captured, registered, t } = bootView()
 
   assert.deepEqual(captured.locales.map((item) => item.ns), ['chat-flow'])
   assert.equal(captured.locales[0].dict.zh['flow.thinking.live'], '思考中')
   assert.deepEqual(
     captured.effects,
-    ['chat-flow: dictionaries', 'chat-flow: purge deleted sessions', 'chat-flow: task view switch'],
-    '语言包注册、「删除会话后的残留清理」与「任务页面开关」都应挂在 effect 上，随插件卸载回收',
+    ['chat-flow: dictionaries', 'chat-flow: purge deleted sessions'],
+    '语言包注册与「删除会话后的残留清理」照旧挂在 effect 上；「任务页面开关」的订阅已随功能停用',
   )
 
   // 合并后核心组也会注入它自己的样式表，所以这里只认任务流那一张（按各自的固定 id 找）。
@@ -118,30 +146,18 @@ test('apply() 注册语言包、样式与唯一的视图条目', () => {
   assert.equal(flowStyles.length, 1, '任务流样式只注入一次（按固定 id 去重）')
   assert.match(flowStyles[0].textContent, /\.dcf-root/)
 
-  assert.ok(view !== undefined, '必须注册 conversation.view')
-  assert.equal(view.options.id, 'flow', '用独立 id：遮蔽会让标签栏出现两个同 id 条目（核心不允许注销别人的条目）')
-  assert.equal(view.options.priority, undefined, '不设 priority：各占一个单元格，互不遮蔽')
-  assert.equal(view.options.order, 5, '排在「对话」(0) 与「轨迹」(10) 之间')
-  assert.equal(view.options.locale, 'chat-flow')
-  assert.equal(view.options.label(), '任务')
+  assert.equal(registered, undefined, '任务视图不再注册（注册入口已在 lib/client-flow/99-tail.js 里注释掉）')
   assert.equal(t('flow.tasksSummary', { total: 2, done: 1 }), '2 项 · 1 已完成')
-
-  const injected = view.options.inject('session-1')
-  assert.equal(injected.sessionId, 'session-1')
-  assert.equal(typeof injected.loadOlder, 'function')
-  // 会话 binding 取不到时点「加载更早」不能抛（切走会话的竞态）。
-  assert.doesNotThrow(() => injected.loadOlder())
 })
 
-test('注入面：视图把子代理席位一起递下去（宿主装了 sessions 就必须有）', () => {
-  const { view } = bootView()
+test('【用户要求暂时停用】子代理注入面不再暴露，但席位工厂本身仍在（便于恢复）', () => {
+  const { registered } = bootView()
 
-  // 席位是「内联看子代理过程」的唯一入口：注入面漏了它，卡片就会静默退回只显示报告，
-  // 而组件与派生层的用例各自都能过——所以这条断言只能落在注入面上。
-  const injected = view.options.inject('session-1')
-  assert.ok(injected.agentSeat !== undefined && injected.agentSeat !== null, '席位必须在注入面上')
-  assert.equal(typeof injected.agentSeat.watch, 'function')
-  assert.equal(typeof injected.agentSeat.openSubagent, 'function')
+  // 停用后视图条目不注册，`inject` 面（含 `agentSeat`）自然也不再对外；恢复时把注册解开即可，
+  // 所以这里额外守住「工厂没被拆掉」——它是恢复的唯一前提。
+  assert.equal(registered, undefined, '任务视图条目不存在，注入面也就无从暴露席位')
+  assert.equal(typeof client.__internals.subagentSeatFace, 'function')
+  assert.deepEqual(client.__internals.subagentSeatFace({}, 'session-1'), {}, '缺服务时席位工厂照旧安全降级')
 })
 
 test('视图渲染：任务过程 / 任务列表 / 正在处理统计都在', () => {
@@ -182,8 +198,8 @@ test('视图渲染：任务过程 / 任务列表 / 正在处理统计都在', ()
   assert.equal(/规划过程/.test(text), false, '「规划过程」折叠体已移除，其内容并进任务过程')
   assert.equal(
     captured.registered.filter((item) => item.options.name === 'conversation.view').length,
-    2,
-    '「对话」视图插槽上并列两条：控制中心的「规则」与任务流',
+    1,
+    '任务流条目已停用，插槽上只剩控制中心自己的「规则」视图',
   )
 })
 
@@ -214,9 +230,7 @@ test('用户气泡：行内内容走平台的 projectUserText（0.2 的 primitiv
   const { ctx, captured, t } = stubCtx()
   local.apply(ctx)
   for (const [, run] of captured.pending) run()
-  const view = captured.registered.find(
-    (item) => item.options.name === 'conversation.view' && item.options.id === 'flow',
-  )
+  const view = flowViewOf(local, captured, t)
   const snapshot = makeSnapshot([userNode('u1', 1, '看一下 @a.js 引用')])
   const tree = view.component({
     sessionId: 'session-1',
@@ -832,16 +846,18 @@ test('子槽声明：核心的两个子槽挂成不可枚举属性（冲突检�
   )
 })
 
-test('接线：视图条目声明 children 并把原生叶子要的能力放进 inject', () => {
+test('接线：视图声明 children，原生叶子要的能力由 nativeSeatFace 给出', () => {
   const { view } = bootView()
   assert.deepEqual(Object.keys(view.options.children), ['chat-flow.seat'], '可枚举子槽只有本插件自己的那个')
   assert.equal(view.options.children['conversation.chat.node'].kind, 'keyed')
 
-  const injected = view.options.inject('session-1')
+  // 【用户要求暂时停用任务视图】注册面已注释掉，`inject` 不再经注册暴露；这里直接调注册时用的
+  // 同一个工厂，能力与降级行为照旧被覆盖（桩 ctx 里没有 uiConversation → loadImage 为 undefined）。
+  const { ctx } = stubCtx()
+  const injected = client.__internals.nativeSeatFace(ctx, 'session-1')
   assert.equal(typeof injected.openFile, 'function')
   assert.equal(typeof injected.fileMentions, 'function')
   assert.equal(typeof injected.forkAt, 'function')
-  // 桩 ctx 里没有 uiConversation → loadImage 降级为 undefined（原生叶子会跳过附件渲染）。
   assert.equal(injected.loadImage, undefined)
 })
 
