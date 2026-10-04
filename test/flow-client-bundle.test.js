@@ -620,6 +620,18 @@ test('原生座位：每个节点都经 conversation.chat.node 交给核心渲�
     assert.equal(typeof call.owner.fileMentions, 'function')
     assert.equal(typeof call.owner.inspectCall, 'function')
     assert.ok(Object.hasOwn(call.options, 'hookContext'), 'hookContext 这个键必须存在（槽上挂着上下文 hook 工厂）')
+    // 核心要的是 {turnData, disclosureReset} 两件套（ui-chat 的 ChatNodeSeat:1713-1718）：
+    // 少给 disclosureReset，原生条目的 `disclosure` hook 会在渲染期抛
+    // `Cannot read properties of undefined (reading 'getSnapshot')`，整行退化成空的 data-slot-error 盒子。
+    assert.equal(typeof call.options.hookContext.disclosureReset.getSnapshot, 'function', 'disclosureReset 必须是快照存储')
+    assert.equal(typeof call.options.hookContext.disclosureReset.subscribe, 'function')
+    assert.equal(
+      call.options.hookContext.turnData,
+      call.owner.node.location?.kind === 'turn' || call.owner.node.location?.kind === 'step'
+        ? call.owner.node.location.turn.data
+        : undefined,
+      'hookContext.turnData 必须就是该节点的回合数据存储',
+    )
     assert.ok(call.options.fallback !== undefined && call.options.fallback !== null, '必须给核心一个回退叶子')
   }
   const toolCall = calls.find((call) => call.owner.node.kind === 'tool-call')
@@ -719,8 +731,14 @@ test('原生座位外面套着错误边界：失败时给出回退叶子，并�
     这一条需要「createElement 不立刻调用组件」的渲染器：手写渲染器会把类组件当场 new 出来，
     拿不到边界元素本身。所以要单独用探针 React 装载一份 bundle（探针的 createElement 只构造元素）。
   */
-  const probeModule = await loadBundle({ react: createProbeReact().react })
+  const probe = createProbeReact()
+  const probeModule = await loadBundle({ react: probe.react })
   const { views } = probeModule.exports.__internals
+  /**
+   * `NativeSeatInner` 现在会调 `useState`（自造展开版本号存储，核心要的 hookContext 两件套之一），
+   * 所以不能再当普通函数直接调，得挂到探针 React 的 mount 里跑。
+   */
+  const renderInner = (props) => probe.mount(views.NativeSeatInner, props).value
   const fallback = { type: 'leaf' }
   const seated = { type: 'native' }
   const node = { key: 't1', kind: 'tool-call' }
@@ -737,17 +755,17 @@ test('原生座位外面套着错误边界：失败时给出回退叶子，并�
   // 座位「认领了却不渲染任何东西」也是真机出现过的一类空白（核心会把答案步的推理写成
   // hidden="until-found"）：渲染成空一律退回自绘叶子，宁可多画一行也不留白。
   assert.equal(
-    views.NativeSeatInner({ node, owner: {}, renderSlot: () => null, fallback }),
+    renderInner({ node, owner: {}, renderSlot: () => null, fallback }),
     fallback,
     '座位渲染成 null 时改用自绘叶子',
   )
   assert.equal(
-    views.NativeSeatInner({ node, owner: {}, renderSlot: () => [], fallback }),
+    renderInner({ node, owner: {}, renderSlot: () => [], fallback }),
     fallback,
     '座位渲染成空数组时同样改用自绘叶子',
   )
   assert.equal(
-    views.NativeSeatInner({ node, owner: {}, renderSlot: () => seated, fallback }),
+    renderInner({ node, owner: {}, renderSlot: () => seated, fallback }),
     seated,
     '座位真的渲染出内容时原样使用',
   )
@@ -818,11 +836,28 @@ test('turnDataOfNode / turnOfChatNode：只有 turn 与 step 两种位置有回�
   const { turnDataOfNode, turnOfChatNode } = client.__internals
   const data = { source: () => undefined }
   const node = { location: { kind: 'step', turn: { turn: 3, data } } }
-  assert.equal(turnDataOfNode(node), data, 'hookContext 必须就是 location.turn.data')
+  assert.equal(turnDataOfNode(node), data, 'hookContext.turnData 必须就是 location.turn.data')
   assert.equal(turnOfChatNode(node), 3)
   assert.equal(turnDataOfNode({ location: { kind: 'unresolved' } }), undefined)
   assert.equal(turnDataOfNode({}), undefined)
   assert.equal(turnOfChatNode(undefined), undefined)
+})
+
+test('createDisclosureReset：核心 bindDisclosure 要的快照存储语义（漏了它原生行整片空白）', () => {
+  const { createDisclosureReset } = client.__internals
+  const reset = createDisclosureReset()
+  assert.equal(reset.getSnapshot(), 0, '初值 0（核心 createSnapshotStore(0) 同义）')
+  const seen = []
+  const unsubscribe = reset.subscribe(() => seen.push(reset.getSnapshot()))
+  reset.set(1)
+  assert.equal(reset.getSnapshot(), 1)
+  assert.deepEqual(seen, [1], 'set 必须通知订阅者')
+  reset.set(1)
+  assert.deepEqual(seen, [1], '同值不重复通知')
+  unsubscribe()
+  reset.set(2)
+  assert.deepEqual(seen, [1], '退订后不再收到通知')
+  assert.equal(reset.getSnapshot(), 2)
 })
 
 test('子槽声明：核心的两个子槽挂成不可枚举属性（冲突检查看不到、所有权检查读得到）', () => {
