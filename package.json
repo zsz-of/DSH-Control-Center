@@ -50,6 +50,7 @@
     "@deepseek-ai/dsh-host-webserver": "*",
     "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-mcp-client": "*",
-    "@deepseek-ai/dsh-skill": "*"
+    "@deepseek-ai/dsh-skill": "*",
+    "@deepseek-ai/dsh-tools": "*"
   }
 }
