@@ -514,38 +514,46 @@ test('localStorage 不可用时仍然能装载（折叠状态退化成内存）'
   assert.equal(flow.turns.length, 1)
 })
 
-test('导轨：未加载刻度点击后按 seq 翻页，已加载刻度直接滚动', () => {
+test('导轨：刻度只由当前对话算（不再读 turnOutline 投影），「更早」刻度走一次普通翻页', () => {
   const { view, t } = bootView()
-  const jumps = []
+  const paged = []
   const tree = view.component({
-    sessionId: 'session-rail-jump',
+    sessionId: 'session-rail-live',
     t,
-    useChat: (selector) => selector(makeSnapshot([userNode('u3', 3, '第三件事')])),
+    useChat: (selector) => selector(makeSnapshot([userNode('u2', 2, '第二件事'), userNode('u3', 3, '第三件事')])),
     useSession: () => ({ hasMore: true, loadingOlder: false }),
-    useProjection: () => [
-      { turn: 1, seq: 10, prompt: '第一件', response: '' },
-      { turn: 3, seq: 30, prompt: '第三件', response: '' },
-    ],
-    loadThrough: (seq) => {
-      jumps.push(seq)
+    // 用户要求任务视图实时根据对话来：投影（落盘缓存）再被读到就该报错。
+    useProjection: () => {
+      throw new Error('任务视图不该再读 turnOutline 投影')
+    },
+    loadOlder: () => {
+      paged.push('older')
       return Promise.resolve()
     },
   })
-  const unloaded = findElement(tree, (element) => element.props?.['data-loaded'] === 'false')
-  assert.ok(unloaded !== undefined, '应渲染未加载刻度')
-  assert.equal(unloaded.props['aria-label'], '加载并跳到第 1 轮')
-  unloaded.props.onClick()
-  assert.deepEqual(jumps, [10], '未加载刻度应按该轮的 seq 翻页')
+
+  const loaded = []
+  findElement(tree, (element) => {
+    if (element.props?.['data-loaded'] === 'true') loaded.push(element)
+    return false
+  })
+  assert.equal(loaded.length, 2, '两个已加载回合两个刻度')
+  assert.equal(loaded[0].props['aria-label'], '跳到第 2 轮')
+
+  const older = findElement(tree, (element) => element.props?.['data-loaded'] === 'false')
+  assert.ok(older !== null && older !== undefined, '还有更早历史时要有「更早」刻度')
+  assert.equal(older.props['aria-label'], '加载更早的回合')
+  older.props.onClick()
+  assert.deepEqual(paged, ['older'], '「更早」刻度走 requestLoadOlder（与列表顶部按钮同一条路径）')
 })
 
-test('没有 turnOutline 时导轨退化成只画已加载回合', () => {
+test('导轨：没有更早历史时不出现「更早」刻度，只画已加载回合', () => {
   const { view, t } = bootView()
   const tree = view.component({
     sessionId: 'session-rail-loaded-only',
     t,
     useChat: (selector) => selector(makeSnapshot([userNode('u1', 1, '一'), userNode('u2', 2, '二')])),
     useSession: () => ({ hasMore: false, loadingOlder: false }),
-    useProjection: () => undefined,
   })
   assert.equal(findElement(tree, (element) => element.props?.['data-loaded'] === 'false'), null)
   assert.equal(findElement(tree, (element) => element.props?.['data-loaded'] === 'true') !== undefined, true, '已加载刻度照常渲染')
@@ -1939,25 +1947,26 @@ test('导轨滚到底：默认停在顶部就看不见最后一格', () => {
   assert.doesNotThrow(() => scrollRailToBottom(undefined), '拿不到导轨也不炸')
 })
 
-test('加载中的刻度：数字让位给转圈，但回合号仍在无障碍文案里', () => {
-  const { views, ZH } = client.__internals
+test('加载中的刻度：「更早」刻度让位给转圈，但读数文案仍可读', () => {
+  const { views, ZH, OLDER_TICK } = client.__internals
   const t = (key, params) => (params === undefined ? ZH[key] ?? key : (ZH[key] ?? key).replace(/\{(\w+)\}/g, (m, name) => String(params[name])))
   const tree = views.TurnRail({
     items: [
-      { turn: 1, loaded: true, seq: 1 },
-      { turn: 2, loaded: false, seq: 2 },
+      { turn: OLDER_TICK, loaded: false, seq: null },
+      { turn: 3, loaded: true, seq: null },
     ],
-    activeTurn: 2,
+    activeTurn: 3,
     liveTurn: null,
-    busyTurn: 2,
+    busyTurn: OLDER_TICK,
     onJump: () => {},
     t,
   })
   const marks = preorderOf(tree).filter((element) => element.props?.className === 'dcf-mark')
-  assert.equal(marks[1].props['data-busy'], 'true')
-  assert.equal(findElement(marks[1], (element) => element.props?.className === 'dcf-spinner') !== undefined, true, '加载中显示转圈')
-  assert.equal(marks[1].props['aria-busy'], 'true')
-  assert.equal(marks[1].props['aria-label'], '加载并跳到第 2 轮', '数字让位了，但屏幕阅读器仍能听到第几轮')
+  assert.equal(marks[0].props['data-loaded'], 'false', '「更早」刻度排在最前')
+  assert.equal(marks[0].props['data-busy'], 'true')
+  assert.equal(findElement(marks[0], (element) => element.props?.className === 'dcf-spinner') !== undefined, true, '加载中显示转圈')
+  assert.equal(marks[0].props['aria-busy'], 'true')
+  assert.equal(marks[0].props['aria-label'], '加载更早的回合', '数字让位了，但屏幕阅读器仍能听到这一格是什么')
 })
 
 test('快速回到底部：判据、滚动动作、样式与文案都在位', () => {

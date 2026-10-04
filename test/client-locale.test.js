@@ -44,7 +44,7 @@ async function readShards() {
 /**
  * 字典条目语法：**行首缩进后**直接是 `'flow.x':`（键后紧跟冒号）。
  *
- * 必须锚定行首：三元表达式 `cond ? 'flow.rail.jump' : 'flow.rail.jumpLoad'` 里
+ * 必须锚定行首：三元表达式 `cond ? 'flow.rail.jump' : 'flow.rail.older'` 里
  * 冒号前的那个字面量长得和字典键一样，不锚定就会把**真实引用**误当成字典条目剥掉，
  * 于是报出「已定义但无人引用」的假警。
  */

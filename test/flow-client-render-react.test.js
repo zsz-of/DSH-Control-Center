@@ -136,8 +136,9 @@ before(async () => {
  * 不传（默认）就是本插件的**回退路径**——这也是插件在没有 ui-chat 的装配里的真实形态。
  *
  * @param snapshot - `useChat` 快照。
- * @param options - `sessionId`、`session`（`useSession` 的返回值）、`outline`、`renderSlot`、`useSessions`、
- *   `agentSeat`（子代理席位，见 `lib/client/58-subagent.js`）。
+ * @param options - `sessionId`、`session`（`useSession` 的返回值）、`renderSlot`、`useSessions`、
+ *   `agentSeat`（子代理席位，见 `lib/client/58-subagent.js`）。**刻意不提供 `useProjection`**：
+ *   任务视图不再读平台投影（用户要求「实时根据对话来」），提供了反而会掩盖回归。
  */
 function render(snapshot, options = {}) {
   const local = options.local ?? internals
@@ -152,7 +153,6 @@ function render(snapshot, options = {}) {
       t,
       useChat: (selector) => selector(snapshot),
       useSession: () => ({ hasMore: false, loadingOlder: false, running: false, ...(options.session ?? {}) }),
-      useProjection: () => options.outline,
       loadOlder: () => {},
       renderSlot: options.renderSlot,
       useSessions: options.useSessions,
@@ -401,21 +401,19 @@ test('SSR：展开态用真实 primitives 渲染出工具明细（不崩、看�
   assert.equal(html.includes('思考中<'), false, '结束的块不该再显示「思考中」')
 })
 
-test('SSR：turnOutline 里的未加载回合也画刻度，并标出「加载并跳转」', (t) => {
+test('SSR：导轨刻度只由当前对话算，「更早」刻度不依赖 turnOutline 投影', (t) => {
   if (!ready) return t.skip('缺少 profile 里的 react / react-dom')
-  // 已加载第 3 轮，outline 里有第 1–3 轮：第 1、2 轮是未加载刻度。
-  const html = render(makeSnapshot([userNode('u3', 3, '第三件事')]), {
-    outline: [
-      { turn: 1, seq: 10, prompt: '第一件事', response: '' },
-      { turn: 2, seq: 20, prompt: '第二件事', response: '' },
-      { turn: 3, seq: 30, prompt: '第三件事', response: '' },
-    ],
-  })
+  // 已加载第 3 轮，会话还有更早的历史：刻度 = 一格「更早」+ 第 3 轮。
+  // 这里刻意**不传** outline/投影：任务视图要实时根据对话来（用户要求）。
+  const html = render(makeSnapshot([userNode('u3', 3, '第三件事')]), { session: { hasMore: true } })
   assert.match(html, /class="dcf-rail"/)
-  assert.equal((html.match(/data-loaded="false"/g) ?? []).length, 2, '两个未加载刻度')
-  assert.equal((html.match(/data-loaded="true"/g) ?? []).length, 1, '一个已加载刻度')
-  assert.match(html, /aria-label="加载并跳到第 1 轮"/)
+  assert.equal((html.match(/data-loaded="false"/g) ?? []).length, 1, '一格「更早」')
+  assert.equal((html.match(/data-loaded="true"/g) ?? []).length, 1, '一个已加载回合')
+  assert.match(html, /aria-label="加载更早的回合"/)
   assert.match(html, /aria-label="跳到第 3 轮"/)
+  // 没有更早历史时这一格消失。
+  const settled = render(makeSnapshot([userNode('u3', 3, '第三件事')]))
+  assert.equal(settled.includes('data-loaded="false"'), false)
 })
 
 /* ──────────────────────────── 原生座位（真实 React） ──────────────────────────── */
