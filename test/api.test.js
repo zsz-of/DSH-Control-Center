@@ -284,13 +284,17 @@ test('API：删会话的坏输入被拒——空名单、非法 id、正在使�
   assert.match(badOp.body.error, /会话分区不支持的操作/)
 
   // 「本进程还活着」的会话必须被拒：删完内存里的还会再写回来，比拒绝更糟。
+  // 用 409 + `code: 'session-live'` 把这件事与普通失败分开：浏览器侧据此先在同一工作目录
+  // 新建一个对话、切过去，再重试一次删除（见 `lib/client/88-sessions.js`）。
   const live = await call(
     mountRuntime({ sessionLive: (id) => id === 'live-one' }),
     'POST',
     '/api/dsh-control-center/action',
     JSON.stringify({ section: 'session', op: 'delete', ids: ['live-one'] }),
   )
-  assert.equal(live.status, 400)
+  assert.equal(live.status, 409)
+  assert.equal(live.body.code, 'session-live')
+  assert.deepEqual(live.body.live, ['live-one'])
   assert.match(live.body.error, /正在本进程中使用/)
 })
 
