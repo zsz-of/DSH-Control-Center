@@ -132,6 +132,26 @@ test('注入：强加载规则正文 + 全局记忆一起进上下文，且第�
   assert.equal(second.messages.length, 0)
 })
 
+test('注入消息的来源是生产者自有的 kind（已退役的 V3 `plugin` 包装会被 format v4 拒收）', async (t) => {
+  if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
+  await store.writeRule({ name: '来源规则', description: '', mode: 'always', body: 'SOURCE-BODY' })
+  const { ctx, captured } = stubContext()
+  plugin.apply(ctx)
+  const handler = captured.handlers.get('agent/pre-step')
+
+  const decision = await runPreStep(handler, 'D:\\Code\\Source')
+  assert.ok(decision.messages.length >= 1, '规则正文必须注入')
+  for (const message of decision.messages) {
+    // format v4 只接受生产者自有的来源名：`{ kind: 'plugin', plugin: name }` 会让
+    // 这一步的 `session.append('user/message', …)` 抛
+    // 「format v4 message requires a producer-owned source kind」，
+    // 注入所在的那一步连 `step/start` 都写不下去，整轮对话卡死。
+    assert.equal(message.source.kind, 'plugin:control-center')
+    assert.equal('plugin' in message.source, false, 'V3 的 `plugin` 包装字段必须去掉')
+    assert.equal(message.source.form, 'snapshot', '渲染层按 form + sections 标成上下文注入行')
+  }
+})
+
 test('注入：关掉记忆注入后只注入规则', async (t) => {
   if (!ready) return t.skip('缺少 @deepseek-ai/dsh-llm 链接')
   await settings.writeSettings({ memory: { inject: false } })
